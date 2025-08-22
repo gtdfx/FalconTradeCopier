@@ -25,6 +25,11 @@ MANIFEST
 *.manifest
 *.spec
 
+# Large executable files (exceed GitHub's 100MB limit)
+*.exe
+dist/
+build/
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
