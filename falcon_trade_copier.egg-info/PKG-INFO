@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: falcon-trade-copier
+Version: 1.0.0
+Summary: Telegram-to-MT5 trade copier with GUI
+Author: Your Name
+Author-email: you@example.com
+Requires-Dist: PySide6
+Requires-Dist: telethon
+Requires-Dist: MetaTrader5
+Requires-Dist: numpy
+Requires-Dist: psutil
+Requires-Dist: requests
+Requires-Dist: spacy
+Dynamic: author
+Dynamic: author-email
+Dynamic: requires-dist
+Dynamic: summary

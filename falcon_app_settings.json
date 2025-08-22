@@ -1,0 +1,78 @@
+{
+  "activated": true,
+  "telegram": {
+    "session_string": "1BVtsOLsBuwNxavhx_WkSrpMC0PqQ0lnACYG2Kteh184F0eCi8Y3FtFLaBl8SFEp33LXmH-z8GtNUDOVnWEegh_Ci6f04Mo8EFBHASXmUUvjtde34OziIeKNjxiLy1S6Pm4pfrsOW5fSSGcMoOrsL9Ol_FVd8b3gin_w-zDskTBfNpXXbtOZefokCS4s3x7-_lLz41IgaL7u2Pf1h19VUelOnqiQL0MLz5-gxxR3-AraLxdOqA3Q9Wyp5fBvfEOtxYBvryXYGUNAdJJ89lI0iijGz3oBXqF4VsgNL51m9sJE6dVk0BNhERw2DkeWB8IFbmkruEAC7KBOw_vpZuQ3cZqGgTUjBcfo=",
+    "channel_ids": [
+      1661400724,
+      1667884332,
+      1212066496,
+      1775121037,
+      2295142103,
+      1588519179,
+      1593088122
+    ]
+  },
+  "risk": {
+    "risk_method": "fixed",
+    "fixed_lot": 0.1,
+    "risk_percent": 1.0,
+    "fixed_dollar": 100.0,
+    "ignore_no_tpsl": false,
+    "max_drawdown_percent": 0.0,
+    "entry_range_handling": "Average Price",
+    "trailing_sl_enabled": false,
+    "trailing_sl_distance": 20.0,
+    "be_after_pips": 0.0,
+    "trail_after_tp": false,
+    "split_tps": true,
+    "max_trades": 20,
+    "pip_tolerance": 2.0,
+    "news_filter": false,
+    "trading_hours": "09:00-17:00",
+    "daily_loss_limit": 50.0,
+    "daily_profit_target": 100.0,
+    "max_trades_per_symbol": 2,
+    "max_spread": 3.0,
+    "execute_in_range": true,
+    "enable_comments": false,
+    "comment_prefix": "FTSC"
+  },
+  "mt5": {
+    "account": "210954987",
+    "server": "Exness-MT5Trial9",
+    "password": "Dagi@1596",
+    "path": "C:\\Program Files\\MetaTrader 5 EXNESS\\terminal64.exe",
+    "symbol_prefix": "",
+    "symbol_suffix": "m"
+  },
+  "symbol_mappings": {
+    "GOLD": "XAUUSD",
+    "SILVER": "XAGUSD",
+    "USOIL": "XTIUSD",
+    "UKOIL": "XBRUSD",
+    "NAS100": "NAS100",
+    "SPX500": "SPX500"
+  },
+  "last_activation": null,
+  "machine_id": "842e0cb3daceeb94203f739bbe8d52058fafd8fe2ecdd6a6e4270224f7532cc0",
+  "license": {
+    "key": "1234123412341234",
+    "email": "bypass@falcontrade.com",
+    "start_date": "2025-08-19T14:06:59.020167",
+    "expiration_date": "2035-08-17T14:06:59.020167",
+    "is_trial": false
+  },
+  "ui": {
+    "theme": "light",
+    "font_size": "medium",
+    "show_notifications": true,
+    "minimize_to_tray": true,
+    "start_minimized": false
+  },
+  "advanced": {
+    "debug_mode": false,
+    "log_level": "INFO",
+    "auto_update": true,
+    "backup_frequency": "daily"
+  }
+}

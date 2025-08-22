@@ -1,0 +1,85 @@
+[
+  {
+    "timestamp": "2025-08-21 12:06:53",
+    "channel": "GTD_fx",
+    "symbol": "XAUUSD",
+    "order_type": "BUY",
+    "entry_price": null,
+    "sl": 3328.78,
+    "tp": null,
+    "tps": [
+      3360.78
+    ],
+    "lot_size": 0.1,
+    "status": "Executed",
+    "profit": 0,
+    "notes": "Trade executed successfully"
+  },
+  {
+    "timestamp": "2025-08-21 12:19:24",
+    "channel": "GTD_fx",
+    "symbol": "XAUUSD",
+    "order_type": "BUY",
+    "entry_price": null,
+    "sl": 3328.78,
+    "tp": null,
+    "tps": [
+      3360.78
+    ],
+    "lot_size": 0.09,
+    "status": "Executed",
+    "profit": 0,
+    "notes": "Trade executed successfully"
+  },
+  {
+    "timestamp": "2025-08-21 12:29:06",
+    "channel": "GTD_fx",
+    "symbol": "XAUUSD",
+    "order_type": "SELL",
+    "entry_price": null,
+    "sl": null,
+    "tp": null,
+    "tps": [
+      3321.0,
+      3311.0,
+      3301.0,
+      3231.0
+    ],
+    "lot_size": 0.1,
+    "status": "Failed",
+    "profit": 0,
+    "notes": "Fixed dollar risk requires SL"
+  },
+  {
+    "timestamp": "2025-08-21 13:32:21",
+    "channel": "\ud83d\udc51TMCFX-VIP\ud83d\udc51",
+    "symbol": "RISK",
+    "order_type": "SELL STOP",
+    "entry_price": 3338.46,
+    "sl": 3339.61,
+    "tp": null,
+    "tps": [
+      3308.46
+    ],
+    "lot_size": 0.1,
+    "status": "Failed",
+    "profit": 0,
+    "notes": "Invalid symbol: RISK"
+  },
+  {
+    "timestamp": "2025-08-21 13:33:55",
+    "channel": "GTD_fx",
+    "symbol": "RISK",
+    "order_type": "SELL STOP",
+    "entry_price": 3338.46,
+    "sl": 3339.61,
+    "tp": null,
+    "tps": [
+      3308.46
+    ],
+    "lot_size": 0.1,
+    "status": "Failed",
+    "profit": 0,
+    "notes": "Invalid symbol: RISK"
+  }
+]

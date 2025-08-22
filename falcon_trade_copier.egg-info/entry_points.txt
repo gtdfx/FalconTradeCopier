@@ -1,0 +1,2 @@
+[console_scripts]
+falconcopier = falcon_trade_copier.main:main

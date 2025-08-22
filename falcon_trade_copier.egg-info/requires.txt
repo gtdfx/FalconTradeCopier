@@ -1,0 +1,7 @@
+PySide6
+telethon
+MetaTrader5
+numpy
+psutil
+requests
+spacy

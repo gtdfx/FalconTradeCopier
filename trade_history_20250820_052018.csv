@@ -1,0 +1,29 @@
+Date/Time,Channel,Symbol,Type,Entry Price,SL,TP,Lot Size,Status,Profit/Loss,Notes
+2025-08-18 14:26:34,GTD_fx,XAUUSD,BUY,Market,3343.2,3375.2,0.19,Executed,$0.00,Trade executed successfully
+2025-08-18 14:26:46,GTD_fx,XAUUSD,BUY,Market,3343.2,3375.2,0.20,Executed,$0.00,Trade executed successfully
+2025-08-18 17:55:12,FxMarshall free channel/signal,RISKY,SELL,3350.0,3350.0,"3302.0, 100.0",0.10,Failed,$0.00,Invalid symbol: RISKY
+2025-08-19 10:20:53,GTD_fx,RISK,SELL,3347.88,3348.76,3327.13,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 10:20:53,GTD_fx,RISK,SELL,3347.88,3348.76,3327.13,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 10:25:02,GTD_fx,RISK,SELL,3349.27,3351.72,3328.96,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 10:36:32,GTD_fx,RISK,SELL,3349.27,3351.72,3328.96,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 10:37:03,GTD_fx,RISK,SELL,3349.27,3351.72,3328.96,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 10:46:01,GTD_fx,RISK,SELL,3349.27,3351.72,3328.96,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 10:47:43,GTD_fx,RISK,SELL,3349.27,3351.72,3328.96,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 10:48:12,GTD_fx,RISK,SELL,3349.27,3351.72,3328.96,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 10:49:41,GTD_fx,RISK,SELL,3349.27,3351.72,3328.96,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 10:50:27,GTD_fx,BTCUSD,SELL,Market,119000.0,115000.0,0.10,Failed,$0.00,Trade failed: Invalid stops (error 10016)
+2025-08-19 10:50:48,GTD_fx,RISK,SELL,3340.82,3342.55,3321.56,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 14:34:03,GTD_fx,RISK,BUY STOP,3343.22,3341.92,3363.58,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 14:41:56,GTD_fx,RISK,BUY STOP,3343.22,3341.92,3363.58,0.10,Failed,$0.00,Invalid symbol: RISK
+2025-08-19 14:43:03,👑TMCFX-VIP👑,XAUUSD,BUY,3339.31,3336.41,3361.35,0.10,Executed,$0.00,Trade executed successfully
+2025-08-19 14:43:46,GTD_fx,XAUUSD,BUY,3339.31,3336.41,3361.35,0.10,Executed,$0.00,Trade executed successfully
+2025-08-19 14:46:33,GTD_fx,XAUUSD,BUY,3339.31,3336.41,3361.35,0.07,Executed,$0.00,Trade executed successfully
+2025-08-19 14:47:06,GTD_fx,XAUUSD,BUY,Market,3325.09,3357.09,0.01,Executed,$0.00,Trade executed successfully
+2025-08-20 00:26:47,GTD_fx,XAUUSD,BUY,Market,3309.9,3341.9,0.02,Executed,$0.00,Trade executed successfully
+2025-08-20 00:27:59,GTD_fx,XAUUSD,SELL,Market,3331.78,3299.78,0.10,Executed,$0.00,Trade executed successfully
+2025-08-20 00:28:22,GTD_fx,XAUUSD,SELL,Market,3331.78,3299.78,0.50,Executed,$0.00,Trade executed successfully
+2025-08-20 01:19:44,GTD_fx,XAUUSD,BUY,Market,3317.32,3349.32,0.50,Executed,$0.00,Trade executed successfully
+2025-08-20 01:48:48,GTD_fx,XAUUSD,SELL,Market,3331.78,3299.78,0.50,Executed,$0.00,Trade executed successfully
+2025-08-20 02:02:10,GTD_fx,XAUUSD,BUY,Market,3314.61,3346.61,0.03,Executed,$0.00,Trade executed successfully
+2025-08-20 02:32:38,GTD_fx,XAUUSD,BUY,Market,3314.61,3346.61,0.02,Executed,$0.00,Trade executed successfully
+2025-08-20 05:18:42,GTD_fx,XAUUSD,BUY,3331.23,3329.96,3339.35,0.10,Failed,$0.00,Trade failed: Invalid stops (error 10016)

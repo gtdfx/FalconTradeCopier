@@ -1,0 +1,9 @@
+README.md
+setup.py
+falcon_trade_copier.egg-info/PKG-INFO
+falcon_trade_copier.egg-info/SOURCES.txt
+falcon_trade_copier.egg-info/dependency_links.txt
+falcon_trade_copier.egg-info/entry_points.txt
+falcon_trade_copier.egg-info/requires.txt
+falcon_trade_copier.egg-info/top_level.txt
+resources/__init__.py
