@@ -3854,29 +3854,28 @@ class TelegramPage(QWidget):
         self.channels = channels  # Store channels
         self.clear_channel_grid()
         if not channels:
-            label = QLabel("No channels available")
-            label.setAlignment(Qt.AlignCenter)
-            self.grid_layout.addWidget(label, 0, 0, 1, 2)
+            no_channels_widget = self.create_no_channels_widget()
+            self.grid_layout.addWidget(no_channels_widget, 0, 0, 1, 2)
             return
 
-        # Add channels to grid
+        # Add channels to grid with enhanced design
         row, col = 0, 0
         max_cols = 2  # Number of columns in grid
 
         for channel in channels:
-            checkbox = QCheckBox(f"{channel['name']} (@{channel['username']})")
-            checkbox.setProperty("channel_id", channel["id"])
-            self.channel_checkboxes[channel["id"]] = checkbox
+            # Create enhanced channel widget
+            channel_widget = self.create_channel_widget(channel)
+            self.channel_checkboxes[channel["id"]] = channel_widget
 
             # Check if this channel is already selected
             saved_ids = [id.strip() for id in self.channel_id_input.text().split(",") if id.strip()]
             if str(channel["id"]) in saved_ids:
-                checkbox.setChecked(True)
+                # Find the checkbox within the widget and check it
+                checkbox = channel_widget.findChild(QCheckBox)
+                if checkbox:
+                    checkbox.setChecked(True)
 
-            # Connect checkbox state change to update ID input
-            checkbox.stateChanged.connect(self.update_channel_ids_from_checkboxes)
-
-            self.grid_layout.addWidget(checkbox, row, col)
+            self.grid_layout.addWidget(channel_widget, row, col)
 
             col += 1
             if col >= max_cols:
@@ -3895,14 +3894,163 @@ class TelegramPage(QWidget):
             if widget:
                 widget.deleteLater()
         self.channel_checkboxes.clear()
+    
+    def create_channel_widget(self, channel):
+        """Create an enhanced channel widget with profile picture and modern design"""
+        # Main container widget
+        container = QWidget()
+        container.setFixedSize(350, 80)
+        container.setStyleSheet("""
+            QWidget {
+                background-color: #1a1f2e;
+                border: 1px solid #2a2f3e;
+                border-radius: 8px;
+                margin: 2px;
+            }
+            QWidget:hover {
+                border: 1px solid #4a4f5e;
+                background-color: #2a2f3e;
+            }
+        """)
+        
+        # Main layout
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+        
+        # Profile picture (using emoji as placeholder)
+        profile_pic = QLabel("📺")
+        profile_pic.setFixedSize(32, 32)
+        profile_pic.setAlignment(Qt.AlignCenter)
+        profile_pic.setStyleSheet("""
+            QLabel {
+                background-color: #4a90e2;
+                border-radius: 16px;
+                font-size: 16px;
+                color: white;
+            }
+        """)
+        
+        # Channel info container
+        info_container = QWidget()
+        info_layout = QVBoxLayout(info_container)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(2)
+        
+        # Channel name
+        name_label = QLabel(channel.get('name', 'Unknown Channel'))
+        name_label.setStyleSheet("""
+            QLabel {
+                font-size: 13px;
+                font-weight: bold;
+                color: #f0f4f9;
+            }
+        """)
+        
+        # Username
+        username_label = QLabel(f"@{channel.get('username', 'unknown')}")
+        username_label.setStyleSheet("""
+            QLabel {
+                font-size: 11px;
+                color: #9ca6b8;
+            }
+        """)
+        
+        # Add info to layout
+        info_layout.addWidget(name_label)
+        info_layout.addWidget(username_label)
+        info_layout.addStretch()
+        
+        # Checkbox with custom styling
+        checkbox = QCheckBox()
+        checkbox.setProperty("channel_id", channel["id"])
+        checkbox.setStyleSheet("""
+            QCheckBox {
+                spacing: 6px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border: 2px solid #4a4f5e;
+                border-radius: 3px;
+                background-color: #1a1f2e;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4a90e2;
+                border: 2px solid #4a90e2;
+                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOSIgdmlld0JveD0iMCAwIDEyIDkiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDQuNUw0LjUgOEwxMSAxIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K);
+            }
+            QCheckBox::indicator:hover {
+                border: 2px solid #6a6f7e;
+            }
+        """)
+        
+        # Connect checkbox state change
+        checkbox.stateChanged.connect(self.update_channel_ids_from_checkboxes)
+        
+        # Add widgets to main layout
+        layout.addWidget(profile_pic)
+        layout.addWidget(info_container, 1)  # Stretch
+        layout.addWidget(checkbox)
+        
+        return container
+    
+    def create_no_channels_widget(self):
+        """Create a widget for when no channels are available"""
+        container = QWidget()
+        container.setFixedSize(500, 100)
+        container.setStyleSheet("""
+            QWidget {
+                background-color: #1a1f2e;
+                border: 1px solid #2a2f3e;
+                border-radius: 8px;
+                margin: 4px;
+            }
+        """)
+        
+        layout = QVBoxLayout(container)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        # Icon
+        icon_label = QLabel("📡")
+        icon_label.setAlignment(Qt.AlignCenter)
+        icon_label.setStyleSheet("font-size: 24px; margin-bottom: 4px;")
+        
+        # Text
+        text_label = QLabel("No channels available")
+        text_label.setAlignment(Qt.AlignCenter)
+        text_label.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                font-weight: bold;
+                color: #9ca6b8;
+            }
+        """)
+        
+        sub_text_label = QLabel("Connect to Telegram to see your channels")
+        sub_text_label.setAlignment(Qt.AlignCenter)
+        sub_text_label.setStyleSheet("""
+            QLabel {
+                font-size: 11px;
+                color: #6c7b7f;
+            }
+        """)
+        
+        layout.addWidget(icon_label)
+        layout.addWidget(text_label)
+        layout.addWidget(sub_text_label)
+        
+        return container
 
     def update_channel_ids_from_checkboxes(self):
         """Update channel ID input and names display based on checkbox states"""
         selected_ids = []
         selected_names = []
         
-        for channel_id, checkbox in self.channel_checkboxes.items():
-            if checkbox.isChecked():
+        for channel_id, widget in self.channel_checkboxes.items():
+            # Find the checkbox within the widget
+            checkbox = widget.findChild(QCheckBox)
+            if checkbox and checkbox.isChecked():
                 selected_ids.append(str(channel_id))
                 # Get channel name and limit characters
                 channel_name = self.get_channel_name(channel_id)
@@ -3950,9 +4098,12 @@ class TelegramPage(QWidget):
         search_text = self.channel_search.text().lower()
         for i in range(self.grid_layout.count()):
             widget = self.grid_layout.itemAt(i).widget()
-            if isinstance(widget, QCheckBox):
-                channel_name = widget.text().lower()
-                widget.setVisible(search_text in channel_name)
+            if widget and hasattr(widget, 'findChild'):
+                # Find the name label within the channel widget
+                name_label = widget.findChild(QLabel)
+                if name_label:
+                    channel_name = name_label.text().lower()
+                    widget.setVisible(search_text in channel_name)
                 
     def update_responsive_layout(self, width, height):
         """Update layout to be responsive to window size"""
@@ -4052,21 +4203,21 @@ class TelegramPage(QWidget):
             if not hasattr(self, 'grid_layout'):
                 return
                 
-            # Store current checkboxes
-            checkboxes = []
+            # Store current widgets
+            widgets = []
             for i in range(self.grid_layout.count()):
                 widget = self.grid_layout.itemAt(i).widget()
-                if isinstance(widget, QCheckBox):
-                    checkboxes.append(widget)
+                if widget:
+                    widgets.append(widget)
                     
             # Clear grid
             for i in reversed(range(self.grid_layout.count())):
                 self.grid_layout.itemAt(i).widget().setParent(None)
                 
-            # Re-add checkboxes with new column layout
+            # Re-add widgets with new column layout
             row, col = 0, 0
-            for checkbox in checkboxes:
-                self.grid_layout.addWidget(checkbox, row, col)
+            for widget in widgets:
+                self.grid_layout.addWidget(widget, row, col)
                 col += 1
                 if col >= max_cols:
                     col = 0
