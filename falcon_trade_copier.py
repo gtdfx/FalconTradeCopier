@@ -3802,12 +3802,6 @@ class TelegramPage(QWidget):
     def get_phone_from_session(self):
         """Extract phone number from saved session or settings"""
         try:
-            # Try to get phone from settings
-            if hasattr(self.parent, 'settings'):
-                phone = self.parent.settings.get_telegram_phone()
-                if phone:
-                    return phone
-            
             # Try to get from telegram manager
             if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
                 return self.parent.telegram_manager.phone
