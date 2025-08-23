@@ -3379,6 +3379,10 @@ class TelegramPage(QWidget):
         QTimer.singleShot(100, self.attempt_auto_connect)
         self.channels = []  # Store loaded channels
         
+        # Connect to TelegramManager signals if available
+        if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
+            self.parent.telegram_manager.connection_status_changed.connect(self.update_connection_status)
+        
     def showEvent(self, event):
         """Called when the page becomes visible"""
         super().showEvent(event)
@@ -3421,9 +3425,13 @@ class TelegramPage(QWidget):
         header = LogoHeader("Telegram Setup", self.parent.app_logo)
         layout.addWidget(header)
 
-                # All elements in one horizontal line
+                # All elements in one horizontal line with proper centering
         input_row = QHBoxLayout()
         input_row.setSpacing(8)
+        input_row.setContentsMargins(0, 20, 0, 20)  # Add vertical padding for centering
+        
+        # Add stretch at the beginning to center the content
+        input_row.addStretch()
         
         # Phone label and input
         phone_label = QLabel("Phone:")
@@ -3446,6 +3454,29 @@ class TelegramPage(QWidget):
         self.code_input.setFixedHeight(32)
         self.code_input.setFixedWidth(120)
         
+        # Connection status indicator (for saved sessions)
+        self.status_indicator = QLabel("●")
+        self.status_indicator.setFixedWidth(20)
+        self.status_indicator.setAlignment(Qt.AlignCenter)
+        self.status_indicator.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #ff4757;
+            }
+        """)
+        self.status_indicator.setVisible(False)
+        
+        # Logged in text (for saved sessions)
+        self.logged_in_text = QLabel("Logged in as:")
+        self.logged_in_text.setStyleSheet("font-size: 12px; font-weight: bold; color: #f0f4f9;")
+        self.logged_in_text.setVisible(False)
+        
+        # Phone number display (for saved sessions)
+        self.phone_display = QLabel("")
+        self.phone_display.setStyleSheet("font-size: 12px; color: #9ca6b8;")
+        self.phone_display.setVisible(False)
+        
         # Buttons
         self.send_code_btn = QPushButton("Send Code")
         self.send_code_btn.setFixedHeight(32)
@@ -3464,6 +3495,7 @@ class TelegramPage(QWidget):
         self.change_number_btn.setVisible(False)
         self.change_number_btn.clicked.connect(self.change_telegram_number)
 
+        # Add all elements to the row
         input_row.addWidget(phone_label)
         input_row.addWidget(self.phone_input)
         input_row.addWidget(code_label)
@@ -3471,7 +3503,14 @@ class TelegramPage(QWidget):
         input_row.addWidget(self.send_code_btn)
         input_row.addWidget(self.verify_btn)
         input_row.addWidget(self.change_number_btn)
-        input_row.addStretch()  # Push everything to the left
+        
+        # Add status elements for saved sessions
+        input_row.addWidget(self.status_indicator)
+        input_row.addWidget(self.logged_in_text)
+        input_row.addWidget(self.phone_display)
+        
+        # Add stretch at the end to center the content
+        input_row.addStretch()
         
         layout.addLayout(input_row)
 
@@ -3583,6 +3622,10 @@ class TelegramPage(QWidget):
 
         self.send_code_btn.setEnabled(False)
         self.parent.status_bar.showMessage("Sending verification code...")
+        
+        # Update UI to verification state (show change button)
+        self.update_ui_for_verification_state()
+        
         self.parent.telegram_manager.connect_telegram(
             TELEGRAM_API_ID,
             TELEGRAM_API_HASH,
@@ -3604,35 +3647,158 @@ class TelegramPage(QWidget):
         self.parent.telegram_manager = TelegramManager()
         self.parent.setup_connections()
         self.parent.settings.set_telegram_session(None)
-        self.phone_input.setEnabled(True)
+        
+        # Reset UI to login state
+        self.update_ui_for_login_state()
+        
+        # Clear inputs
         self.phone_input.clear()
         self.code_input.clear()
-        self.code_input.setEnabled(False)
-        self.verify_btn.setEnabled(False)
-        self.change_number_btn.setVisible(False)
+        
+        # Reset other UI elements
         self.next_btn.setEnabled(False)
         self.clear_channel_grid()
         self.channel_id_input.clear()
-        self.send_code_btn.setEnabled(True)
-        self.send_code_btn.setVisible(True)
+        
         self.parent.update_connection_status()
         self.parent.status_bar.showMessage("Enter new phone number")
 
     def check_session_status(self):
         session = self.parent.settings.get_telegram_session()
         if session:
-            self.send_code_btn.setVisible(False)
-            self.change_number_btn.setVisible(True)
+            self.update_ui_for_logged_in_state()
+        else:
+            self.update_ui_for_login_state()
+    
+    def update_ui_for_logged_in_state(self):
+        """Update UI when user has a saved session (logged in state)"""
+        # Hide input fields
+        self.phone_input.setVisible(False)
+        self.code_input.setVisible(False)
+        self.send_code_btn.setVisible(False)
+        self.verify_btn.setVisible(False)
+        
+        # Show status elements
+        self.status_indicator.setVisible(True)
+        self.logged_in_text.setVisible(True)
+        self.phone_display.setVisible(True)
+        
+        # Show change button
+        self.change_number_btn.setVisible(True)
+        
+        # Update status indicator color based on connection
+        if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager.connected:
+            self.status_indicator.setStyleSheet("""
+                QLabel {
+                    font-size: 16px;
+                    font-weight: bold;
+                    color: #2ed573;
+                }
+            """)
+            self.status_indicator.setText("●")
+        else:
+            self.status_indicator.setStyleSheet("""
+                QLabel {
+                    font-size: 16px;
+                    font-weight: bold;
+                    color: #ff4757;
+                }
+            """)
+            self.status_indicator.setText("●")
+        
+        # Get phone number from session or settings
+        phone = self.get_phone_from_session()
+        if phone:
+            self.phone_display.setText(phone)
+    
+    def update_ui_for_login_state(self):
+        """Update UI for initial login state"""
+        # Show input fields
+        self.phone_input.setVisible(True)
+        self.code_input.setVisible(True)
+        self.send_code_btn.setVisible(True)
+        self.verify_btn.setVisible(True)
+        
+        # Hide status elements
+        self.status_indicator.setVisible(False)
+        self.logged_in_text.setVisible(False)
+        self.phone_display.setVisible(False)
+        
+        # Hide change button
+        self.change_number_btn.setVisible(False)
+        
+        # Reset input states
+        self.phone_input.setEnabled(True)
+        self.code_input.setEnabled(False)
+        self.verify_btn.setEnabled(False)
+    
+    def update_ui_for_verification_state(self):
+        """Update UI when verification code has been sent"""
+        # Keep input fields visible but disable phone input
+        self.phone_input.setVisible(True)
+        self.phone_input.setEnabled(False)
+        self.code_input.setVisible(True)
+        self.code_input.setEnabled(True)
+        
+        # Show both verify and change buttons
+        self.send_code_btn.setVisible(False)
+        self.verify_btn.setVisible(True)
+        self.verify_btn.setEnabled(True)
+        self.change_number_btn.setVisible(True)
+        
+        # Hide status elements
+        self.status_indicator.setVisible(False)
+        self.logged_in_text.setVisible(False)
+        self.phone_display.setVisible(False)
+    
+    def get_phone_from_session(self):
+        """Extract phone number from saved session or settings"""
+        try:
+            # Try to get phone from settings
+            if hasattr(self.parent, 'settings'):
+                phone = self.parent.settings.get_telegram_phone()
+                if phone:
+                    return phone
+            
+            # Try to get from telegram manager
+            if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
+                return self.parent.telegram_manager.phone
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error getting phone from session: {e}")
+            return None
+    
+    def update_connection_status(self, connected):
+        """Update the connection status indicator"""
+        if hasattr(self, 'status_indicator') and self.status_indicator.isVisible():
+            if connected:
+                self.status_indicator.setStyleSheet("""
+                    QLabel {
+                        font-size: 16px;
+                        font-weight: bold;
+                        color: #2ed573;
+                    }
+                """)
+                self.status_indicator.setText("●")
+            else:
+                self.status_indicator.setStyleSheet("""
+                    QLabel {
+                        font-size: 16px;
+                        font-weight: bold;
+                        color: #ff4757;
+                    }
+                """)
+                self.status_indicator.setText("●")
 
     def attempt_auto_connect(self):
         session = self.parent.settings.get_telegram_session()
         if session and hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
             self.parent.status_bar.showMessage("Attempting auto-login...")
-            self.send_code_btn.setVisible(False)
-            self.change_number_btn.setVisible(True)
-            self.phone_input.setEnabled(False)
-            self.code_input.setEnabled(False)
-            self.verify_btn.setEnabled(False)
+            
+            # Update UI to logged in state
+            self.update_ui_for_logged_in_state()
+            
             self.parent.telegram_manager.session_string = session
             self.parent.telegram_manager.connect_telegram(
                 TELEGRAM_API_ID, TELEGRAM_API_HASH, ""
@@ -3644,31 +3810,29 @@ class TelegramPage(QWidget):
         self.channels = channels  # Store channels
         self.clear_channel_grid()
         if not channels:
-            label = QLabel("No channels available")
-            label
-            label.setAlignment(Qt.AlignCenter)
-            self.grid_layout.addWidget(label, 0, 0, 1, 2)
+            # Create a modern "no channels" widget
+            no_channels_widget = self.create_no_channels_widget()
+            self.grid_layout.addWidget(no_channels_widget, 0, 0, 1, 2)
             return
 
-        # Add channels to grid
+        # Add channels to grid with enhanced design
         row, col = 0, 0
         max_cols = 2  # Number of columns in grid
 
         for channel in channels:
-            checkbox = QCheckBox(f"{channel['name']} (@{channel['username']})")
-            checkbox
-            checkbox.setProperty("channel_id", channel["id"])
-            self.channel_checkboxes[channel["id"]] = checkbox
+            # Create enhanced channel widget
+            channel_widget = self.create_channel_widget(channel)
+            self.channel_checkboxes[channel["id"]] = channel_widget
 
             # Check if this channel is already selected
             saved_ids = [id.strip() for id in self.channel_id_input.text().split(",") if id.strip()]
             if str(channel["id"]) in saved_ids:
-                checkbox.setChecked(True)
+                # Find the checkbox within the widget and check it
+                checkbox = channel_widget.findChild(QCheckBox)
+                if checkbox:
+                    checkbox.setChecked(True)
 
-            # Connect checkbox state change to update ID input
-            checkbox.stateChanged.connect(self.update_channel_ids_from_checkboxes)
-
-            self.grid_layout.addWidget(checkbox, row, col)
+            self.grid_layout.addWidget(channel_widget, row, col)
 
             col += 1
             if col >= max_cols:
@@ -3677,6 +3841,189 @@ class TelegramPage(QWidget):
         
         # Update the names display after loading all channels
         self.update_channel_ids_from_checkboxes()
+    
+    def create_channel_widget(self, channel):
+        """Create a modern channel card widget"""
+        # Main container widget
+        container = QWidget()
+        container.setFixedSize(400, 120)
+        container.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1a1f2e, stop:1 #0d111f);
+                border: 2px solid #2a2f3e;
+                border-radius: 12px;
+                margin: 4px;
+            }
+            QWidget:hover {
+                border: 2px solid #4a4f5e;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2a2f3e, stop:1 #1a1f2e);
+            }
+        """)
+        
+        # Main layout
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+        
+        # Profile picture placeholder (you can replace with actual image loading)
+        profile_pic = QLabel("📺")
+        profile_pic.setFixedSize(48, 48)
+        profile_pic.setAlignment(Qt.AlignCenter)
+        profile_pic.setStyleSheet("""
+            QLabel {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4a90e2, stop:1 #357abd);
+                border-radius: 24px;
+                font-size: 24px;
+                color: white;
+            }
+        """)
+        
+        # Channel info container
+        info_container = QWidget()
+        info_layout = QVBoxLayout(info_container)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(4)
+        
+        # Channel name
+        name_label = QLabel(channel.get('name', 'Unknown Channel'))
+        name_label.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                font-weight: bold;
+                color: #f0f4f9;
+            }
+        """)
+        
+        # Username
+        username_label = QLabel(f"@{channel.get('username', 'unknown')}")
+        username_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                color: #9ca6b8;
+            }
+        """)
+        
+        # Subscriber count (if available)
+        subscribers = channel.get('participants_count', 0)
+        if subscribers > 0:
+            if subscribers >= 1000000:
+                sub_text = f"{subscribers/1000000:.1f}M subscribers"
+            elif subscribers >= 1000:
+                sub_text = f"{subscribers/1000:.1f}K subscribers"
+            else:
+                sub_text = f"{subscribers} subscribers"
+        else:
+            sub_text = "Private channel"
+        
+        sub_label = QLabel(sub_text)
+        sub_label.setStyleSheet("""
+            QLabel {
+                font-size: 11px;
+                color: #6c7b7f;
+            }
+        """)
+        
+        # Status indicator
+        status_label = QLabel("●")
+        status_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                font-weight: bold;
+                color: #2ed573;
+            }
+        """)
+        
+        # Add info to layout
+        info_layout.addWidget(name_label)
+        info_layout.addWidget(username_label)
+        info_layout.addWidget(sub_label)
+        info_layout.addStretch()
+        
+        # Checkbox
+        checkbox = QCheckBox()
+        checkbox.setProperty("channel_id", channel["id"])
+        checkbox.setStyleSheet("""
+            QCheckBox {
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 20px;
+                height: 20px;
+                border: 2px solid #4a4f5e;
+                border-radius: 4px;
+                background-color: #1a1f2e;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4a90e2;
+                border: 2px solid #4a90e2;
+                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOSIgdmlld0JveD0iMCAwIDEyIDkiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDQuNUw0LjUgOEwxMSAxIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K);
+            }
+            QCheckBox::indicator:hover {
+                border: 2px solid #6a6f7e;
+            }
+        """)
+        
+        # Connect checkbox state change
+        checkbox.stateChanged.connect(self.update_channel_ids_from_checkboxes)
+        
+        # Add widgets to main layout
+        layout.addWidget(profile_pic)
+        layout.addWidget(info_container, 1)  # Stretch
+        layout.addWidget(status_label)
+        layout.addWidget(checkbox)
+        
+        return container
+    
+    def create_no_channels_widget(self):
+        """Create a widget for when no channels are available"""
+        container = QWidget()
+        container.setFixedSize(600, 150)
+        container.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1a1f2e, stop:1 #0d111f);
+                border: 2px solid #2a2f3e;
+                border-radius: 12px;
+                margin: 8px;
+            }
+        """)
+        
+        layout = QVBoxLayout(container)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        # Icon
+        icon_label = QLabel("📡")
+        icon_label.setAlignment(Qt.AlignCenter)
+        icon_label.setStyleSheet("font-size: 48px; margin-bottom: 8px;")
+        
+        # Text
+        text_label = QLabel("No channels available")
+        text_label.setAlignment(Qt.AlignCenter)
+        text_label.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #9ca6b8;
+            }
+        """)
+        
+        sub_text_label = QLabel("Connect to Telegram to see your channels")
+        sub_text_label.setAlignment(Qt.AlignCenter)
+        sub_text_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                color: #6c7b7f;
+            }
+        """)
+        
+        layout.addWidget(icon_label)
+        layout.addWidget(text_label)
+        layout.addWidget(sub_text_label)
+        
+        return container
 
     def clear_channel_grid(self):
         # Clear existing checkboxes
@@ -3691,8 +4038,10 @@ class TelegramPage(QWidget):
         selected_ids = []
         selected_names = []
         
-        for channel_id, checkbox in self.channel_checkboxes.items():
-            if checkbox.isChecked():
+        for channel_id, widget in self.channel_checkboxes.items():
+            # Find the checkbox within the widget
+            checkbox = widget.findChild(QCheckBox)
+            if checkbox and checkbox.isChecked():
                 selected_ids.append(str(channel_id))
                 # Get channel name and limit characters
                 channel_name = self.get_channel_name(channel_id)
@@ -3740,9 +4089,12 @@ class TelegramPage(QWidget):
         search_text = self.channel_search.text().lower()
         for i in range(self.grid_layout.count()):
             widget = self.grid_layout.itemAt(i).widget()
-            if isinstance(widget, QCheckBox):
-                channel_name = widget.text().lower()
-                widget.setVisible(search_text in channel_name)
+            if widget and hasattr(widget, 'findChild'):
+                # Find the name label within the channel widget
+                name_label = widget.findChild(QLabel)
+                if name_label:
+                    channel_name = name_label.text().lower()
+                    widget.setVisible(search_text in channel_name)
                 
     def update_responsive_layout(self, width, height):
         """Update layout to be responsive to window size"""
@@ -3842,21 +4194,21 @@ class TelegramPage(QWidget):
             if not hasattr(self, 'grid_layout'):
                 return
                 
-            # Store current checkboxes
-            checkboxes = []
+            # Store current widgets
+            widgets = []
             for i in range(self.grid_layout.count()):
                 widget = self.grid_layout.itemAt(i).widget()
-                if isinstance(widget, QCheckBox):
-                    checkboxes.append(widget)
+                if widget:
+                    widgets.append(widget)
                     
             # Clear grid
             for i in reversed(range(self.grid_layout.count())):
                 self.grid_layout.itemAt(i).widget().setParent(None)
                 
-            # Re-add checkboxes with new column layout
+            # Re-add widgets with new column layout
             row, col = 0, 0
-            for checkbox in checkboxes:
-                self.grid_layout.addWidget(checkbox, row, col)
+            for widget in widgets:
+                self.grid_layout.addWidget(widget, row, col)
                 col += 1
                 if col >= max_cols:
                     col = 0
