@@ -23,8 +23,8 @@ from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QDateEdit, QTextEdit, QTreeWidget, QTreeWidgetItem
 from PySide6.QtCore import QPropertyAnimation, QEasingCurve
 import pyperclip
-from PySide6.QtGui import QIcon, QPalette, QColor, QAction, QFont, QImage, QPixmap, QLinearGradient, QBrush, QPainter, \
-    QFontMetrics
+from PySide6.QtGui import QIcon, QPalette, QColor, QAction, QFont, QImage, QPixmap, QLinearGradient, QConicalGradient, QBrush, QPainter, \
+    QFontMetrics, QPainterPath
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem, QCheckBox,
@@ -1677,7 +1677,32 @@ class SettingsManager:
             return False
 
     def is_activated(self):
-        return self.settings.get("activated", False)
+        """Check if the software is activated and license is still valid"""
+        try:
+            activated = self.settings.get("activated", False)
+            if not activated:
+                return False
+                
+            # Check if license has expired
+            license_info = self.settings.get("license", {})
+            expiration_date_str = license_info.get("expiration_date")
+            
+            if expiration_date_str:
+                try:
+                    expiration_date = datetime.fromisoformat(expiration_date_str)
+                    if datetime.now() > expiration_date:
+                        logger.warning("License has expired, deactivating software")
+                        self.settings["activated"] = False
+                        self.save()
+                        return False
+                except Exception as e:
+                    logger.error(f"Error parsing expiration date: {e}")
+                    
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking activation status: {e}")
+            return False
 
     def set_activated(self, status=True, key=None, email=None, is_trial=False, expiration=None):
         self.settings["activated"] = status
@@ -3217,6 +3242,48 @@ class ActivationPage(QWidget):
         footer
         footer.setOpenExternalLinks(True)
         layout.addWidget(footer, 0, Qt.AlignCenter)
+        
+        # Debug section (only show in development)
+        if hasattr(self.main_window, 'debug_mode') and self.main_window.debug_mode:
+            debug_layout = QHBoxLayout()
+            debug_layout.addStretch()
+            
+            debug_btn = QPushButton("Debug: Check Activation Status")
+            debug_btn.setStyleSheet("""
+                QPushButton {
+                    background: transparent;
+                    color: #6b7a8f;
+                    border: 1px solid #6b7a8f;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    padding: 4px 8px;
+                }
+                QPushButton:hover {
+                    background: rgba(107, 122, 143, 0.1);
+                }
+            """)
+            debug_btn.clicked.connect(self.debug_activation_status)
+            debug_layout.addWidget(debug_btn)
+            
+            reset_btn = QPushButton("Debug: Reset Activation")
+            reset_btn.setStyleSheet("""
+                QPushButton {
+                    background: transparent;
+                    color: #ef4444;
+                    border: 1px solid #ef4444;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    padding: 4px 8px;
+                }
+                QPushButton:hover {
+                    background: rgba(239, 68, 68, 0.1);
+                }
+            """)
+            reset_btn.clicked.connect(self.debug_reset_activation)
+            debug_layout.addWidget(reset_btn)
+            
+            debug_layout.addStretch()
+            layout.addLayout(debug_layout)
 
         # Set initial status
         self.update_status(True, "Enter your license key to continue")
@@ -3285,6 +3352,42 @@ class ActivationPage(QWidget):
             # Ensure button is reset even if there's an error
             self.activate_btn.setEnabled(True)
             self.activate_btn.setText("Activate License")
+    
+    def debug_activation_status(self):
+        """Debug method to check current activation status"""
+        try:
+            info = self.main_window.get_activation_info()
+            message = f"Activation Status: {'ACTIVATED' if info.get('activated') else 'NOT ACTIVATED'}\n"
+            message += f"License Key: {info.get('license_key', 'None')}\n"
+            message += f"Email: {info.get('email', 'None')}\n"
+            message += f"Trial: {'Yes' if info.get('is_trial') else 'No'}\n"
+            message += f"Expires: {info.get('expiration_date', 'None')}\n"
+            message += f"Machine ID: {info.get('machine_id', 'None')}"
+            
+            QMessageBox.information(self, "Debug: Activation Status", message)
+            
+        except Exception as e:
+            logger.error(f"Error in debug_activation_status: {e}")
+            QMessageBox.warning(self, "Debug Error", f"Error checking activation status: {e}")
+    
+    def debug_reset_activation(self):
+        """Debug method to reset activation status"""
+        try:
+            reply = QMessageBox.question(
+                self, 
+                "Debug: Reset Activation", 
+                "Are you sure you want to reset the activation status? This will require re-activation.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                self.main_window.reset_activation_status()
+                QMessageBox.information(self, "Debug: Reset Complete", "Activation status has been reset.")
+                
+        except Exception as e:
+            logger.error(f"Error in debug_reset_activation: {e}")
+            QMessageBox.warning(self, "Debug Error", f"Error resetting activation: {e}")
     
     def reset_ui_state(self):
         """Reset the activation page to initial state"""
@@ -3369,6 +3472,70 @@ class ActivationPage(QWidget):
 # =====================
 # TELEGRAM SETUP PAGE
 # =====================
+class ToggleSwitch(QCheckBox):
+    """Custom toggle switch widget with enhanced visibility and slider"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(32, 18)  # Even smaller, more compact size
+        self.setStyleSheet("""
+            QCheckBox {
+                spacing: 0px;
+                background-color: transparent;
+                border: none;
+            }
+            QCheckBox::indicator {
+                width: 32px;
+                height: 18px;
+                border: 2px solid #5a5f6e;
+                border-radius: 9px;
+                background-color: #3a3f4e;
+                position: relative;
+            }
+            QCheckBox::indicator:checked {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #f27d03, stop:0.6 #ff8a1a, stop:1 #e07000);
+                border: 2px solid #f27d03;
+                box-shadow: 0 0 6px rgba(242, 125, 3, 0.5);
+            }
+            QCheckBox::indicator:!checked {
+                background-color: #3a3f4e;
+                border: 2px solid #5a5f6e;
+                box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
+            }
+            QCheckBox::indicator:hover {
+                border: 2px solid #f27d03;
+                background-color: #4a4f5e;
+                box-shadow: 0 0 8px rgba(242, 125, 3, 0.4);
+            }
+            QCheckBox::indicator:checked:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff8a1a, stop:0.6 #e07000, stop:1 #d06500);
+                box-shadow: 0 0 10px rgba(242, 125, 3, 0.7);
+            }
+            QCheckBox::indicator:pressed {
+                transform: scale(0.92);
+            }
+        """)
+        
+        # Add a tooltip to make it more obvious
+        self.setToolTip("Toggle channel selection")
+        
+        # Connect state change to add animation effect
+        self.stateChanged.connect(self._on_state_changed)
+    
+    def _on_state_changed(self, state):
+        """Handle state change with visual feedback"""
+        if state == Qt.Checked:
+            # Add a subtle glow effect
+            self.setStyleSheet(self.styleSheet() + """
+                QCheckBox::indicator {
+                    animation: switchGlow 0.15s ease-out;
+                }
+            """)
+        else:
+            # Reset animation
+            self.setStyleSheet(self.styleSheet().replace("animation: switchGlow 0.15s ease-out;", ""))
+
 class TelegramPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3400,7 +3567,10 @@ class TelegramPage(QWidget):
             self.parent.telegram_manager and 
             hasattr(self.parent.telegram_manager, 'connected') and 
             self.parent.telegram_manager.connected):
+            self.update_ui_for_logged_in_state()
             QTimer.singleShot(500, self.load_channels_if_connected)
+            # Force refresh phone display after a short delay
+            QTimer.singleShot(1000, self.refresh_phone_display)
         else:
             # If Telegram is not connected but we have saved channels, try to load them
             saved_channels = self.parent.settings.get_telegram_channels()
@@ -3423,6 +3593,9 @@ class TelegramPage(QWidget):
             
     def load_channels_if_connected(self):
         """Load channels if Telegram is connected"""
+        # Show loading indicator first
+        self.show_loading_indicator()
+        
         if (hasattr(self.parent, 'telegram_manager') and 
             self.parent.telegram_manager and 
             hasattr(self.parent.telegram_manager, 'connected') and 
@@ -3464,9 +3637,9 @@ class TelegramPage(QWidget):
         input_row.addStretch()
         
         # Phone label and input
-        phone_label = QLabel("Phone:")
-        phone_label.setFixedWidth(50)
-        phone_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #f0f4f9;")
+        self.phone_label = QLabel("Phone:")
+        self.phone_label.setFixedWidth(50)
+        self.phone_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #f0f4f9;")
         
         self.phone_input = QLineEdit()
         self.phone_input.setPlaceholderText("+1234567890")
@@ -3474,9 +3647,9 @@ class TelegramPage(QWidget):
         self.phone_input.setFixedWidth(120)
         
         # Code label and input
-        code_label = QLabel("Code:")
-        code_label.setFixedWidth(50)
-        code_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #f0f4f9;")
+        self.code_label = QLabel("Code:")
+        self.code_label.setFixedWidth(50)
+        self.code_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #f0f4f9;")
         
         self.code_input = QLineEdit()
         self.code_input.setPlaceholderText("12345")
@@ -3484,28 +3657,22 @@ class TelegramPage(QWidget):
         self.code_input.setFixedHeight(32)
         self.code_input.setFixedWidth(120)
         
-        # Connection status indicator (for saved sessions)
-        self.status_indicator = QLabel("●")
-        self.status_indicator.setFixedWidth(20)
-        self.status_indicator.setAlignment(Qt.AlignCenter)
-        self.status_indicator.setStyleSheet("""
+        # Phone number display with background (for saved sessions)
+        self.phone_display = QLabel("")
+        self.phone_display.setStyleSheet("""
             QLabel {
-                font-size: 16px;
-                font-weight: bold;
-                color: #ff4757;
+                font-size: 14px;
+                font-weight: 600;
+                color: #f0f4f9;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2a2f3e, stop:1 #3a3f4e);
+                border: 2px solid #4a4f5e;
+                border-radius: 8px;
+                padding: 8px 16px;
+                margin: 4px;
             }
         """)
-        self.status_indicator.setVisible(False)
-        
-        # Logged in text (for saved sessions)
-        self.logged_in_text = QLabel("Logged in as:")
-        self.logged_in_text.setStyleSheet("font-size: 12px; font-weight: bold; color: #f0f4f9;")
-        self.logged_in_text.setVisible(False)
-        
-        # Phone number display (for saved sessions)
-        self.phone_display = QLabel("")
-        self.phone_display.setStyleSheet("font-size: 12px; color: #9ca6b8;")
         self.phone_display.setVisible(False)
+        self.phone_display.setAlignment(Qt.AlignCenter)
         
         # Buttons
         self.send_code_btn = QPushButton("Send Code")
@@ -3519,28 +3686,64 @@ class TelegramPage(QWidget):
         self.verify_btn.setEnabled(False)
         self.verify_btn.clicked.connect(self.verify_telegram_code)
 
-        self.change_number_btn = QPushButton("Change")
-        self.change_number_btn.setFixedHeight(32)
-        self.change_number_btn.setFixedWidth(80)
-        self.change_number_btn.setVisible(False)
-        self.change_number_btn.clicked.connect(self.change_telegram_number)
+        self.logout_btn = QPushButton("Logout")
+        self.logout_btn.setFixedHeight(32)
+        self.logout_btn.setFixedWidth(80)
+        self.logout_btn.setVisible(False)
+        self.logout_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ef4444, stop:1 #dc2626);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #dc2626, stop:1 #b91c1c);
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #b91c1c, stop:1 #991b1b);
+            }
+        """)
+        self.logout_btn.clicked.connect(self.logout_telegram)
 
-        # Add all elements to the row (will be managed by update_ui methods)
-        input_row.addWidget(phone_label)
+        # Add all elements to the row
+        input_row.addWidget(self.phone_label)
         input_row.addWidget(self.phone_input)
-        input_row.addWidget(code_label)
+        input_row.addWidget(self.code_label)
         input_row.addWidget(self.code_input)
         input_row.addWidget(self.send_code_btn)
         input_row.addWidget(self.verify_btn)
-        input_row.addWidget(self.change_number_btn)
-        
-        # Add status elements for saved sessions
-        input_row.addWidget(self.status_indicator)
-        input_row.addWidget(self.logged_in_text)
-        input_row.addWidget(self.phone_display)
         
         # Add stretch at the end to center the content
         input_row.addStretch()
+        
+        # Create logged in status layout (centered horizontal line with label and logout)
+        self.logged_in_layout = QHBoxLayout()
+        self.logged_in_layout.setSpacing(15)
+        
+        # "You are logged in as:" label
+        self.logged_in_label = QLabel("You are logged in as:")
+        self.logged_in_label.setStyleSheet("""
+            QLabel {
+                font-size: 13px;
+                font-weight: 600;
+                color: #8b9bb4;
+            }
+        """)
+        self.logged_in_label.setVisible(False)
+        
+        # Add elements to logged in layout - centered together
+        self.logged_in_layout.addStretch()  # Left spacer for centering
+        self.logged_in_layout.addWidget(self.logged_in_label)
+        self.logged_in_layout.addWidget(self.phone_display)
+        self.logged_in_layout.addWidget(self.logout_btn)
+        self.logged_in_layout.addStretch()  # Right spacer for centering
+        
+        # Add the logged in layout to main layout
+        layout.addLayout(self.logged_in_layout)
         
         layout.addLayout(input_row)
 
@@ -3559,6 +3762,10 @@ class TelegramPage(QWidget):
         self.channel_search.setFixedHeight(28)
         self.channel_search.setFixedWidth(200)
         self.channel_search.textChanged.connect(self.filter_channels)
+        
+        # Add clear search functionality
+        self.channel_search.setClearButtonEnabled(True)
+        self.channel_search.setPlaceholderText("Search channels by name or username...")
         
         channel_header_layout.addWidget(channel_header)
         channel_header_layout.addStretch()  # Push search to right side
@@ -3636,7 +3843,7 @@ class TelegramPage(QWidget):
         layout.addLayout(nav_layout)
 
         # Set fixed width for buttons
-        for btn in [self.send_code_btn, self.verify_btn, self.change_number_btn]:
+        for btn in [self.send_code_btn, self.verify_btn, self.logout_btn]:
             btn.setFixedWidth(150)
 
         # Load saved channels if any
@@ -3685,28 +3892,142 @@ class TelegramPage(QWidget):
         self.parent.telegram_manager.authenticate(code)
 
     def change_telegram_number(self):
-        # Check if telegram_manager is available
-        if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
-            self.parent.telegram_manager.stop_listening()
-        
-        self.parent.telegram_manager = TelegramManager()
-        self.parent.setup_connections()
-        self.parent.settings.set_telegram_session(None)
-        
-        # Reset UI to login state
-        self.update_ui_for_login_state()
-        
-        # Clear inputs
-        self.phone_input.clear()
-        self.code_input.clear()
-        
-        # Reset other UI elements
-        self.next_btn.setEnabled(False)
-        self.clear_channel_grid()
-        self.channel_id_input.clear()
-        
-        self.parent.update_connection_status()
-        self.parent.status_bar.showMessage("Enter new phone number")
+        """Change Telegram phone number - properly logout first"""
+        try:
+            # Properly logout from Telegram client first
+            if (hasattr(self.parent, 'telegram_manager') and 
+                self.parent.telegram_manager and 
+                hasattr(self.parent.telegram_manager, 'client') and 
+                self.parent.telegram_manager.client):
+                
+                # Logout from Telegram client
+                try:
+                    if self.parent.telegram_manager.client.is_connected():
+                        # Use asyncio to logout properly
+                        asyncio.run_coroutine_threadsafe(
+                            self._logout_telegram_client(),
+                            self.parent.telegram_manager.loop
+                        )
+                except Exception as e:
+                    logger.error(f"Error during Telegram client logout: {e}")
+            
+            # Stop Telegram manager
+            if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
+                self.parent.telegram_manager.stop_listening()
+            
+            # Clear saved session and phone number
+            self.parent.settings.set_telegram_session(None)
+            if 'telegram_phone' in self.parent.settings.settings:
+                del self.parent.settings.settings['telegram_phone']
+            self.parent.settings.save()
+            
+            # Create a new Telegram manager to ensure fresh session
+            self.parent.telegram_manager = TelegramManager()
+            self.parent.setup_connections()
+            
+            # Reset UI to login state
+            self.update_ui_for_login_state()
+            
+            # Clear inputs
+            self.phone_input.clear()
+            self.code_input.clear()
+            
+            # Reset other UI elements
+            self.next_btn.setEnabled(False)
+            self.clear_channel_grid()
+            self.channel_id_input.clear()
+            
+            self.parent.update_connection_status()
+            self.parent.status_bar.showMessage("Enter new phone number")
+            
+        except Exception as e:
+            logger.error(f"Error changing Telegram number: {e}")
+            QMessageBox.warning(self, "Error", f"Failed to change phone number: {str(e)}")
+
+    def logout_telegram(self):
+        """Logout from Telegram and clear saved session"""
+        try:
+            # Confirm logout action
+            reply = QMessageBox.question(
+                self, 
+                "Logout Telegram", 
+                "Are you sure you want to logout from Telegram? This will clear your saved session.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                # Properly logout from Telegram client
+                if (hasattr(self.parent, 'telegram_manager') and 
+                    self.parent.telegram_manager and 
+                    hasattr(self.parent.telegram_manager, 'client') and 
+                    self.parent.telegram_manager.client):
+                    
+                    # Logout from Telegram client
+                    try:
+                        if self.parent.telegram_manager.client.is_connected():
+                            # Use asyncio to logout properly
+                            asyncio.run_coroutine_threadsafe(
+                                self._logout_telegram_client(),
+                                self.parent.telegram_manager.loop
+                            )
+                    except Exception as e:
+                        logger.error(f"Error during Telegram client logout: {e}")
+                
+                # Stop Telegram manager
+                if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
+                    self.parent.telegram_manager.stop_listening()
+                
+                # Clear saved session and phone number
+                self.parent.settings.set_telegram_session(None)
+                if 'telegram_phone' in self.parent.settings.settings:
+                    del self.parent.settings.settings['telegram_phone']
+                self.parent.settings.save()
+                
+                # Create a new Telegram manager to ensure fresh session
+                self.parent.telegram_manager = TelegramManager()
+                self.parent.setup_connections()
+                
+                # Reset UI to login state
+                self.update_ui_for_login_state()
+                
+                # Clear inputs
+                self.phone_input.clear()
+                self.code_input.clear()
+                
+                # Reset other UI elements
+                self.next_btn.setEnabled(False)
+                self.clear_channel_grid()
+                self.channel_id_input.clear()
+                
+                # Update connection status
+                self.parent.update_connection_status()
+                self.parent.status_bar.showMessage("Logged out successfully. Please login again.")
+                
+                logger.info("User logged out from Telegram - session cleared")
+                
+        except Exception as e:
+            logger.error(f"Error during logout: {e}")
+            QMessageBox.warning(self, "Logout Error", f"Failed to logout: {str(e)}")
+    
+    async def _logout_telegram_client(self):
+        """Async method to properly logout from Telegram client"""
+        try:
+            if (hasattr(self.parent, 'telegram_manager') and 
+                self.parent.telegram_manager and 
+                hasattr(self.parent.telegram_manager, 'client') and 
+                self.parent.telegram_manager.client):
+                
+                # Logout from Telegram
+                await self.parent.telegram_manager.client.log_out()
+                logger.info("Telegram client logged out successfully")
+                
+                # Clear session string in TelegramManager
+                self.parent.telegram_manager.session_string = None
+                self.parent.telegram_manager.phone = None
+                
+        except Exception as e:
+            logger.error(f"Error in async logout: {e}")
 
     def check_session_status(self):
         session = self.parent.settings.get_telegram_session()
@@ -3717,79 +4038,46 @@ class TelegramPage(QWidget):
     
     def update_ui_for_logged_in_state(self):
         """Update UI when user has a saved session (logged in state)"""
-        # Hide all input fields and labels
-        for widget in [self.phone_input, self.code_input, self.send_code_btn, self.verify_btn]:
-            widget.setVisible(False)
+        # Hide input fields and labels
+        self.phone_label.setVisible(False)
+        self.phone_input.setVisible(False)
+        self.code_label.setVisible(False)
+        self.code_input.setVisible(False)
+        self.send_code_btn.setVisible(False)
+        self.verify_btn.setVisible(False)
         
-        # Hide phone and code labels by finding them in the parent layout
-        parent_layout = self.phone_input.parent().layout()
-        if parent_layout:
-            for i in range(parent_layout.count()):
-                item = parent_layout.itemAt(i)
-                if item.widget():
-                    widget = item.widget()
-                    if isinstance(widget, QLabel) and widget.text() in ["Phone:", "Code:"]:
-                        widget.setVisible(False)
-        
-        # Show status elements
-        self.status_indicator.setVisible(True)
-        self.logged_in_text.setVisible(True)
+        # Show logged in layout (label, phone display, and logout button)
+        self.logged_in_label.setVisible(True)
         self.phone_display.setVisible(True)
-        
-        # Show only change button
-        self.change_number_btn.setVisible(True)
-        
-        # Update status indicator color based on connection
-        if (hasattr(self.parent, 'telegram_manager') and 
-            self.parent.telegram_manager and 
-            hasattr(self.parent.telegram_manager, 'connected') and 
-            self.parent.telegram_manager.connected):
-            self.status_indicator.setStyleSheet("""
-                QLabel {
-                    font-size: 16px;
-                    font-weight: bold;
-                    color: #2ed573;
-                }
-            """)
-            self.status_indicator.setText("●")
-        else:
-            self.status_indicator.setStyleSheet("""
-                QLabel {
-                    font-size: 16px;
-                    font-weight: bold;
-                    color: #ff4757;
-                }
-            """)
-            self.status_indicator.setText("●")
+        self.logout_btn.setVisible(True)
         
         # Get phone number from session or settings
         phone = self.get_phone_from_session()
-        if phone:
+        logger.info(f"Retrieved phone from session: {phone}")
+        
+        if phone and phone not in ["Saved Session", "Logged In", "Unknown"]:
             self.phone_display.setText(phone)
+        elif phone in ["Saved Session", "Logged In"]:
+            self.phone_display.setText("Loading...")
+            # Try to fetch the real phone number asynchronously
+            self.fetch_phone_from_client()
+        else:
+            self.phone_display.setText("Unknown")
     
     def update_ui_for_login_state(self):
         """Update UI for initial login state"""
-        # Show all input fields and labels
-        for widget in [self.phone_input, self.code_input, self.send_code_btn, self.verify_btn]:
-            widget.setVisible(True)
+        # Show input fields and labels
+        self.phone_label.setVisible(True)
+        self.phone_input.setVisible(True)
+        self.code_label.setVisible(True)
+        self.code_input.setVisible(True)
+        self.send_code_btn.setVisible(True)
+        self.verify_btn.setVisible(True)
         
-        # Show phone and code labels by finding them in the parent layout
-        parent_layout = self.phone_input.parent().layout()
-        if parent_layout:
-            for i in range(parent_layout.count()):
-                item = parent_layout.itemAt(i)
-                if item.widget():
-                    widget = item.widget()
-                    if isinstance(widget, QLabel) and widget.text() in ["Phone:", "Code:"]:
-                        widget.setVisible(True)
-        
-        # Hide status elements
-        self.status_indicator.setVisible(False)
-        self.logged_in_text.setVisible(False)
+        # Hide logged in layout (label, phone display, and logout button)
+        self.logged_in_label.setVisible(False)
         self.phone_display.setVisible(False)
-        
-        # Hide change button
-        self.change_number_btn.setVisible(False)
+        self.logout_btn.setVisible(False)
         
         # Reset input states
         self.phone_input.setEnabled(True)
@@ -3798,68 +4086,138 @@ class TelegramPage(QWidget):
     
     def update_ui_for_verification_state(self):
         """Update UI when verification code has been sent"""
-        # Show all input fields and labels
-        for widget in [self.phone_input, self.code_input, self.send_code_btn, self.verify_btn]:
-            widget.setVisible(True)
-        
-        # Show phone and code labels by finding them in the parent layout
-        parent_layout = self.phone_input.parent().layout()
-        if parent_layout:
-            for i in range(parent_layout.count()):
-                item = parent_layout.itemAt(i)
-                if item.widget():
-                    widget = item.widget()
-                    if isinstance(widget, QLabel) and widget.text() in ["Phone:", "Code:"]:
-                        widget.setVisible(True)
-        
-        # Disable phone input but keep it visible
+        # Keep input fields and labels visible but disable phone input
+        self.phone_label.setVisible(True)
+        self.phone_input.setVisible(True)
         self.phone_input.setEnabled(False)
+        self.code_label.setVisible(True)
+        self.code_input.setVisible(True)
         self.code_input.setEnabled(True)
         
-        # Show both verify and change buttons
+        # Show verify button
         self.send_code_btn.setVisible(False)
         self.verify_btn.setVisible(True)
         self.verify_btn.setEnabled(True)
-        self.change_number_btn.setVisible(True)
         
-        # Hide status elements
-        self.status_indicator.setVisible(False)
-        self.logged_in_text.setVisible(False)
+        # Hide logged in layout (label, phone display, and logout button)
+        self.logged_in_label.setVisible(False)
         self.phone_display.setVisible(False)
+        self.logout_btn.setVisible(False)
     
     def get_phone_from_session(self):
         """Extract phone number from saved session or settings"""
         try:
-            # Try to get from telegram manager
-            if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
-                return self.parent.telegram_manager.phone
+            logger.info("get_phone_from_session called")
             
+            # Try to get from telegram manager first
+            if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
+                if hasattr(self.parent.telegram_manager, 'phone') and self.parent.telegram_manager.phone:
+                    logger.info(f"Found phone in telegram_manager: {self.parent.telegram_manager.phone}")
+                    return self.parent.telegram_manager.phone
+                
+                # Try to get from the Telegram client if connected
+                if (hasattr(self.parent.telegram_manager, 'client') and 
+                    self.parent.telegram_manager.client and
+                    hasattr(self.parent.telegram_manager.client, '_phone')):
+                    phone = getattr(self.parent.telegram_manager.client, '_phone', None)
+                    if phone:
+                        logger.info(f"Found phone in client._phone: {phone}")
+                        return phone
+            
+            # Try to get from settings
+            if hasattr(self.parent, 'settings'):
+                # Check if there's a saved phone in settings
+                saved_phone = self.parent.settings.settings.get('telegram_phone', None)
+                if saved_phone:
+                    logger.info(f"Found phone in settings: {saved_phone}")
+                    return saved_phone
+            
+            # If we have a session but no phone, try to get it asynchronously
+            if (hasattr(self.parent, 'telegram_manager') and 
+                self.parent.telegram_manager and
+                hasattr(self.parent.telegram_manager, 'client') and
+                self.parent.telegram_manager.client and
+                hasattr(self.parent.telegram_manager.client, 'is_user_authorized')):
+                # Schedule an async task to get the phone number
+                logger.info("No phone found, scheduling async fetch")
+                QTimer.singleShot(100, self.fetch_phone_from_client)
+                return "Logged In"
+            
+            logger.info("No phone found and no session available")
             return None
         except Exception as e:
             logger.error(f"Error getting phone from session: {e}")
             return None
     
-    def update_connection_status(self, connected):
-        """Update the connection status indicator"""
-        if hasattr(self, 'status_indicator') and self.status_indicator.isVisible():
-            if connected:
-                self.status_indicator.setStyleSheet("""
-                    QLabel {
-                        font-size: 16px;
-                        font-weight: bold;
-                        color: #2ed573;
-                    }
-                """)
-                self.status_indicator.setText("●")
+    def fetch_phone_from_client(self):
+        """Fetch phone number from Telegram client asynchronously"""
+        try:
+            if (hasattr(self.parent, 'telegram_manager') and 
+                self.parent.telegram_manager and
+                hasattr(self.parent.telegram_manager, 'loop') and
+                self.parent.telegram_manager.loop):
+                asyncio.run_coroutine_threadsafe(
+                    self._get_phone_from_client(),
+                    self.parent.telegram_manager.loop
+                )
+        except Exception as e:
+            logger.error(f"Error fetching phone from client: {e}")
+    
+    async def _get_phone_from_client(self):
+        """Async method to get phone number from Telegram client"""
+        try:
+            if (hasattr(self.parent, 'telegram_manager') and 
+                self.parent.telegram_manager and
+                hasattr(self.parent.telegram_manager, 'client') and
+                self.parent.telegram_manager.client):
+                
+                # Get user info from Telegram
+                me = await self.parent.telegram_manager.client.get_me()
+                if me and hasattr(me, 'phone') and me.phone:
+                    phone = f"+{me.phone}"
+                    # Save to settings for future use
+                    self.parent.settings.settings['telegram_phone'] = phone
+                    self.parent.settings.save()
+                    logger.info(f"Retrieved phone from Telegram client: {phone}")
+                    
+                    # Update the UI in the main thread using a more reliable method
+                    def update_ui():
+                        self.update_phone_display(phone)
+                    QTimer.singleShot(0, update_ui)
+        except Exception as e:
+            logger.error(f"Error getting phone from Telegram client: {e}")
+    
+    def update_phone_display(self, phone):
+        """Update the phone display in the UI"""
+        try:
+            logger.info(f"update_phone_display called with: {phone}")
+            if phone:
+                self.phone_display.setText(phone)
+                logger.info(f"Updated phone display: {phone}")
             else:
-                self.status_indicator.setStyleSheet("""
-                    QLabel {
-                        font-size: 16px;
-                        font-weight: bold;
-                        color: #ff4757;
-                    }
-                """)
-                self.status_indicator.setText("●")
+                logger.warning("update_phone_display called with empty phone")
+        except Exception as e:
+            logger.error(f"Error updating phone display: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    def refresh_phone_display(self):
+        """Force refresh the phone display from settings"""
+        try:
+            logger.info("refresh_phone_display called")
+            if hasattr(self.parent, 'settings'):
+                saved_phone = self.parent.settings.settings.get('telegram_phone', None)
+                if saved_phone:
+                    logger.info(f"Found saved phone in refresh: {saved_phone}")
+                    self.phone_display.setText(saved_phone)
+                else:
+                    logger.info("No saved phone found in refresh")
+                    # Try to fetch from Telegram client
+                    self.fetch_phone_from_client()
+        except Exception as e:
+            logger.error(f"Error in refresh_phone_display: {e}")
+    
+
 
     def attempt_auto_connect(self):
         session = self.parent.settings.get_telegram_session()
@@ -3879,19 +4237,41 @@ class TelegramPage(QWidget):
             logger.warning("Telegram manager not available for auto-connect")
 
     def load_channels(self, channels):
+        """Load channels into the grid with modern design and smooth animations"""
         self.channels = channels  # Store channels
-        self.clear_channel_grid()
+        self.clear_channel_grid()  # This will remove the loading indicator
+        
         if not channels:
             no_channels_widget = self.create_no_channels_widget()
-            self.grid_layout.addWidget(no_channels_widget, 0, 0, 1, 2)
+            self.grid_layout.addWidget(no_channels_widget, 0, 0, 1, 1)
             return
 
-        # Add channels to grid with enhanced design
-        row, col = 0, 0
-        max_cols = 2  # Number of columns in grid
-
-        for channel in channels:
-            # Create enhanced channel widget
+        # Calculate optimal grid layout based on number of channels and window size
+        total_channels = len(channels)
+        
+        # Get parent window size for responsive design
+        parent_width = self.parent.width() if hasattr(self.parent, 'width') else 800
+        
+        if parent_width < 600:
+            cols = 1  # Single column for small windows
+        elif parent_width < 900:
+            cols = 2  # 2 columns for medium windows
+        elif parent_width < 1200:
+            cols = 3  # 3 columns for large windows
+        else:
+            cols = 4  # 4 columns for very large windows
+        
+        # Adjust based on number of channels
+        if total_channels <= 4:
+            cols = min(cols, 2)
+        elif total_channels <= 8:
+            cols = min(cols, 3)
+        else:
+            cols = min(cols, 4)
+        
+        # Add channels to grid layout with smooth animations
+        for i, channel in enumerate(channels):
+            # Create modern channel widget
             channel_widget = self.create_channel_widget(channel)
             self.channel_checkboxes[channel["id"]] = channel_widget
 
@@ -3903,17 +4283,97 @@ class TelegramPage(QWidget):
                 if checkbox:
                     checkbox.setChecked(True)
 
+            # Calculate grid position
+            row = i // cols
+            col = i % cols
+            
             self.grid_layout.addWidget(channel_widget, row, col)
-
-            col += 1
-            if col >= max_cols:
-                col = 0
-                row += 1
+            
+            # Add smooth loading animation with staggered timing
+            QTimer.singleShot(i * 80, lambda widget=channel_widget: self.animate_channel_widget(widget))
         
         # Update the names display after loading all channels
         self.update_channel_ids_from_checkboxes()
     
+    def animate_channel_widget(self, widget):
+        """Animate channel widget appearance with fade-in effect"""
+        try:
+            # Create fade-in animation
+            animation = QPropertyAnimation(widget, b"windowOpacity")
+            animation.setDuration(400)
+            animation.setStartValue(0.0)
+            animation.setEndValue(1.0)
+            animation.setEasingCurve(QEasingCurve.OutCubic)
+            animation.start()
+        except Exception as e:
+            logger.error(f"Error animating channel widget: {e}")
+    
+    def refresh_grid_layout(self):
+        """Refresh grid layout when window is resized"""
+        if hasattr(self, 'channels') and self.channels:
+            self.load_channels(self.channels)
+    
+    def resizeEvent(self, event):
+        """Handle resize events for responsive grid layout"""
+        super().resizeEvent(event)
+        # Debounce resize events to avoid excessive updates
+        if hasattr(self, '_resize_timer'):
+            self._resize_timer.stop()
+        else:
+            self._resize_timer = QTimer()
+            self._resize_timer.setSingleShot(True)
+            self._resize_timer.timeout.connect(self.refresh_grid_layout)
+        
+        self._resize_timer.start(300)  # 300ms delay
+    
 
+
+    def create_loading_indicator(self):
+        """Create a simple loading indicator with thin progress bar"""
+        loading_widget = QWidget()
+        loading_widget.setFixedHeight(60)
+        
+        layout = QVBoxLayout(loading_widget)
+        layout.setSpacing(8)
+        layout.setContentsMargins(20, 15, 20, 15)
+        
+        # Simple loading label
+        loading_label = QLabel("Loading channels...")
+        loading_label.setStyleSheet("""
+            font-size: 12px;
+            color: #9ca6b8;
+            text-align: center;
+        """)
+        loading_label.setAlignment(Qt.AlignCenter)
+        
+        # Thin progress bar
+        progress_bar = QProgressBar()
+        progress_bar.setFixedHeight(4)
+        progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                background-color: #1a1f2e;
+                border-radius: 2px;
+            }
+            QProgressBar::chunk {
+                background-color: #f27d03;
+                border-radius: 2px;
+            }
+        """)
+        progress_bar.setRange(0, 0)  # Indeterminate progress
+        progress_bar.setValue(0)
+        
+        layout.addWidget(loading_label)
+        layout.addWidget(progress_bar)
+        
+        return loading_widget
+
+    def show_loading_indicator(self):
+        """Show loading indicator in the channel grid"""
+        self.clear_channel_grid()
+        loading_widget = self.create_loading_indicator()
+        self.grid_layout.addWidget(loading_widget, 0, 0, 1, 1)
+        self.grid_layout.setAlignment(loading_widget, Qt.AlignCenter)
 
     def clear_channel_grid(self):
         # Clear existing checkboxes
@@ -3924,136 +4384,554 @@ class TelegramPage(QWidget):
         self.channel_checkboxes.clear()
     
     def create_channel_widget(self, channel):
-        """Create a simple, clean channel widget without heavy card design"""
-        # Main container widget - simpler design
+        """Create a modern grid-styled channel widget with enhanced profile pictures"""
+        # Main container widget - compact grid card design
         container = QWidget()
-        container.setFixedSize(400, 50)  # Smaller height, no heavy borders
+        container.setFixedSize(280, 100)  # Reduced height for cleaner look
         container.setStyleSheet("""
             QWidget {
-                background-color: transparent;
-                border: none;
-                margin: 1px;
+                background-color: #0d111f;
+                border: 1px solid #1c243b;
+                border-radius: 12px;
+                margin: 4px;
             }
             QWidget:hover {
-                background-color: #1a1f2e;
-                border-radius: 4px;
+                background-color: #131a2d;
+                border: 2px solid #f27d03;
+                transform: translateY(-1px);
             }
         """)
         
-        # Main layout
+        # Main layout - horizontal for better space utilization
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(8, 4, 8, 4)  # Less vertical padding
+        layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(12)
         
-        # Simple icon (smaller)
-        icon_label = QLabel("📺")
-        icon_label.setFixedSize(24, 24)
-        icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setStyleSheet("""
+        # Profile picture with enhanced design
+        profile_pic = QLabel()
+        profile_pic.setFixedSize(56, 56)  # Slightly larger for better visibility
+        profile_pic.setAlignment(Qt.AlignCenter)
+        profile_pic.setStyleSheet("""
             QLabel {
-                background-color: #4a90e2;
-                border-radius: 12px;
-                font-size: 12px;
-                color: white;
+                border-radius: 28px;
+                background: qconicalgradient(cx:0.5, cy:0.5, angle:0, 
+                    stop:0 #f27d03, stop:0.25 #ff8a1a, stop:0.5 #e07000, 
+                    stop:0.75 #f27d03, stop:1 #ff8a1a);
+                color: #020711;
+                font-size: 20px;
+                font-weight: bold;
+                border: 2px solid #1c243b;
+                min-width: 56px;
+                max-width: 56px;
+                min-height: 56px;
+                max-height: 56px;
             }
         """)
         
-        # Channel info - horizontal layout for compactness
-        info_container = QWidget()
-        info_layout = QHBoxLayout(info_container)
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(8)
+        # Set initial placeholder with better styling
+        channel_name = channel.get('name', 'Unknown Channel')
+        if channel_name:
+            initial = channel_name[0].upper()
+            profile_pic.setText(initial)
+        else:
+            profile_pic.setText("📺")
         
-        # Channel name
+        # Enhanced profile picture loading with gradient fallback
+        self.load_channel_profile_picture(profile_pic, channel)
+        
+        # Channel info container
+        info_container = QWidget()
+        info_container.setStyleSheet("background-color: transparent; border: none;")
+        info_layout = QVBoxLayout(info_container)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(4)
+        
+        # Channel name with modern typography
         name_label = QLabel(channel.get('name', 'Unknown Channel'))
         name_label.setStyleSheet("""
             QLabel {
-                font-size: 13px;
-                font-weight: bold;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 14px;
+                font-weight: 600;
                 color: #f0f4f9;
+                background-color: transparent;
+                border: none;
             }
         """)
+        name_label.setWordWrap(True)
         
-        # Username (smaller, less prominent)
+        # Username with modern styling
         username_label = QLabel(f"@{channel.get('username', 'unknown')}")
         username_label.setStyleSheet("""
             QLabel {
+                font-family: 'Segoe UI', Arial, sans-serif;
                 font-size: 11px;
-                color: #6c7b7f;
+                color: #9ca6b8;
+                background-color: transparent;
+                border: none;
             }
         """)
         
-        # Add info to layout
         info_layout.addWidget(name_label)
         info_layout.addWidget(username_label)
-        info_layout.addStretch()
         
-        # Simple checkbox
-        checkbox = QCheckBox()
+        # Modern toggle switch
+        checkbox = ToggleSwitch()
         checkbox.setProperty("channel_id", channel["id"])
-        checkbox.setStyleSheet("""
-            QCheckBox {
-                spacing: 4px;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 1px solid #4a4f5e;
-                border-radius: 2px;
-                background-color: transparent;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #4a90e2;
-                border: 1px solid #4a90e2;
-            }
-            QCheckBox::indicator:hover {
-                border: 1px solid #6a6f7e;
-            }
-        """)
         
         # Connect checkbox state change
         checkbox.stateChanged.connect(self.update_channel_ids_from_checkboxes)
         
-        # Add widgets to main layout
-        layout.addWidget(icon_label)
-        layout.addWidget(info_container, 1)  # Stretch
+        # Add widgets to layout
+        layout.addWidget(profile_pic)
+        layout.addWidget(info_container)
+        layout.addStretch()
         layout.addWidget(checkbox)
         
         return container
     
+    def load_channel_profile_picture(self, profile_label, channel):
+        """Load real profile picture for channel with immediate cache check"""
+        try:
+            channel_id = channel.get('id')
+            channel_name = channel.get('name', 'Unknown')
+            
+            # Set gradient fallback immediately
+            self.set_gradient_fallback(profile_label, channel)
+            
+            # Try to load from cache immediately (synchronous)
+            if self.load_profile_picture_from_cache(profile_label, channel):
+                logger.info(f"Loaded profile picture from cache for {channel_name}")
+                return
+            
+            # If not in cache, try async loading from Telegram
+            if (hasattr(self.parent, 'telegram_manager') and 
+                self.parent.telegram_manager and
+                hasattr(self.parent.telegram_manager, 'client') and
+                self.parent.telegram_manager.client):
+                
+                def fetch_profile_picture():
+                    self._fetch_profile_picture(profile_label, channel)
+                QTimer.singleShot(100, fetch_profile_picture)
+                
+        except Exception as e:
+            logger.error(f"Error in profile picture load for {channel.get('name', 'Unknown')}: {e}")
+    
+    def load_profile_picture_from_cache(self, profile_label, channel):
+        """Load profile picture from cache synchronously"""
+        try:
+            channel_id = channel.get('id')
+            if not channel_id:
+                return False
+            
+            # Get script directory for absolute path
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            possible_paths = [
+                os.path.join(script_dir, "channel_photos", f"channel_{channel_id}.jpg"),
+                os.path.join(script_dir, "channel_photos", f"channel_{channel_id}.png"),
+                os.path.join(script_dir, "channel_photos", f"channel_{channel_id}.jpeg"),
+                f"channel_photos/channel_{channel_id}.jpg",  # Fallback relative path
+            ]
+            
+            for local_photo_path in possible_paths:
+                if os.path.exists(local_photo_path):
+                    try:
+                        with open(local_photo_path, 'rb') as f:
+                            photo_bytes = f.read()
+                        if photo_bytes and len(photo_bytes) > 100:
+                            self.update_profile_picture(profile_label, photo_bytes)
+                            return True
+                    except Exception as e:
+                        logger.warning(f"Error loading cached profile picture from {local_photo_path}: {e}")
+                        continue
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error loading profile picture from cache: {e}")
+            return False
+    
+    def set_gradient_fallback(self, profile_label, channel):
+        """Set a beautiful gradient fallback for profile picture"""
+        try:
+            channel_name = channel.get('name', 'Unknown Channel')
+            if channel_name:
+                initial = channel_name[0].upper()
+            else:
+                initial = "📺"
+            
+            # Create gradient based on channel name for consistency
+            import hashlib
+            name_hash = hashlib.md5(channel_name.encode()).hexdigest()
+            
+            # Create gradient colors based on app theme
+            from PySide6.QtGui import QColor, QConicalGradient
+            
+            # Generate colors that complement the app's coral theme
+            # Use variations of the app's primary colors
+            base_colors = [
+                "#f27d03",  # Primary coral
+                "#ff8a1a",  # Light coral
+                "#e07000",  # Dark coral
+                "#1d9e4a",  # Success green
+                "#4a90e2",  # Info blue
+                "#f54e4e",  # Error red
+            ]
+            
+            # Select colors based on channel name hash
+            color1 = base_colors[int(name_hash[0:2], 16) % len(base_colors)]
+            color2 = base_colors[int(name_hash[2:4], 16) % len(base_colors)]
+            color3 = base_colors[int(name_hash[4:6], 16) % len(base_colors)]
+            
+            profile_label.setStyleSheet(f"""
+                QLabel {{
+                    border-radius: 28px;
+                    background: qconicalgradient(cx:0.5, cy:0.5, angle:0, 
+                        stop:0 {color1}, stop:0.33 {color2}, stop:0.66 {color3}, stop:1 {color1});
+                    color: #020711;
+                    font-size: 20px;
+                    font-weight: bold;
+                    border: 2px solid #1c243b;
+                    min-width: 56px;
+                    max-width: 56px;
+                    min-height: 56px;
+                    max-height: 56px;
+                }}
+            """)
+            profile_label.setText(initial)
+            
+        except Exception as e:
+            logger.error(f"Error setting gradient fallback: {e}")
+            # Fallback to default coral gradient
+            profile_label.setStyleSheet("""
+                QLabel {
+                    border-radius: 28px;
+                    background: qconicalgradient(cx:0.5, cy:0.5, angle:0, 
+                        stop:0 #f27d03, stop:0.25 #ff8a1a, stop:0.5 #e07000, 
+                        stop:0.75 #f27d03, stop:1 #ff8a1a);
+                    color: #020711;
+                    font-size: 20px;
+                    font-weight: bold;
+                    border: 2px solid #1c243b;
+                    min-width: 56px;
+                    max-width: 56px;
+                    min-height: 56px;
+                    max-height: 56px;
+                }
+            """)
+            profile_label.setText(initial)
+    
+    def _fetch_profile_picture(self, profile_label, channel):
+        """Fetch profile picture from Telegram"""
+        try:
+            channel_name = channel.get('name', 'Unknown')
+            logger.info(f"Fetching profile picture for {channel_name}")
+            
+            if (hasattr(self.parent, 'telegram_manager') and 
+                self.parent.telegram_manager and
+                hasattr(self.parent.telegram_manager, 'loop') and
+                self.parent.telegram_manager.loop):
+                
+                logger.info(f"Telegram loop available, scheduling async task for {channel_name}")
+                asyncio.run_coroutine_threadsafe(
+                    self._get_profile_picture_async(profile_label, channel),
+                    self.parent.telegram_manager.loop
+                )
+            else:
+                logger.warning(f"Telegram loop not available for {channel_name}")
+        except Exception as e:
+            logger.error(f"Error fetching profile picture: {e}")
+    
+    async def _get_profile_picture_async(self, profile_label, channel):
+        """Enhanced async method to get profile picture from Telegram or local cache with perfect fallback"""
+        try:
+            channel_id = channel.get('id')
+            channel_name = channel.get('name', 'Unknown')
+            
+            logger.info(f"Async profile picture fetch started for {channel_name} (ID: {channel_id})")
+            
+            if not channel_id:
+                logger.warning(f"No channel ID for {channel_name}")
+                return
+                
+            # First try to load from local cache with multiple formats
+            # Get the current script directory to ensure correct path
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            possible_paths = [
+                os.path.join(script_dir, f"channel_photos/channel_{channel_id}.jpg"),
+                os.path.join(script_dir, f"channel_photos/channel_{channel_id}.png"),
+                os.path.join(script_dir, f"channel_photos/channel_{channel_id}.jpeg"),
+                f"channel_photos/channel_{channel_id}.jpg",  # Fallback to relative path
+                f"channel_photos/channel_{channel_id}.png",
+                f"channel_photos/channel_{channel_id}.jpeg"
+            ]
+            
+            logger.info(f"Checking {len(possible_paths)} possible cache paths for {channel_name}")
+            for local_photo_path in possible_paths:
+                logger.info(f"Checking path: {local_photo_path}")
+                if os.path.exists(local_photo_path):
+                    logger.info(f"Found cached profile picture at: {local_photo_path}")
+                    try:
+                        with open(local_photo_path, 'rb') as f:
+                            photo_bytes = f.read()
+                        if photo_bytes and len(photo_bytes) > 100:  # Ensure it's a valid image
+                            logger.info(f"Valid cached profile picture found for {channel_name} ({len(photo_bytes)} bytes)")
+                            # Fix lambda capture issue by creating a proper closure
+                            def update_with_photo():
+                                self.update_profile_picture(profile_label, photo_bytes)
+                            QTimer.singleShot(0, update_with_photo)
+                            logger.info(f"Loaded cached profile picture for channel: {channel_name} from {local_photo_path}")
+                            return
+                        else:
+                            logger.warning(f"Invalid cached profile picture for {channel_name} ({len(photo_bytes) if photo_bytes else 0} bytes)")
+                    except Exception as e:
+                        logger.warning(f"Error loading cached profile picture from {local_photo_path}: {e}")
+                        continue
+                else:
+                    logger.info(f"Cache file not found: {local_photo_path}")
+            
+            # If no local cache, try to get from Telegram
+            if (hasattr(self.parent, 'telegram_manager') and 
+                self.parent.telegram_manager and
+                hasattr(self.parent.telegram_manager, 'client') and
+                self.parent.telegram_manager.client):
+                
+                try:
+                    # Get the entity
+                    entity = await self.parent.telegram_manager.client.get_entity(channel_id)
+                    if entity and hasattr(entity, 'photo') and entity.photo:
+                        # Download profile photo
+                        photo = await self.parent.telegram_manager.client.download_profile_photo(entity, bytes)
+                        if photo and len(photo) > 100:  # Ensure it's a valid image
+                            # Save to local cache
+                            try:
+                                script_dir = os.path.dirname(os.path.abspath(__file__))
+                                cache_dir = os.path.join(script_dir, "channel_photos")
+                                os.makedirs(cache_dir, exist_ok=True)
+                                cache_path = os.path.join(cache_dir, f"channel_{channel_id}.jpg")
+                                with open(cache_path, 'wb') as f:
+                                    f.write(photo)
+                                logger.info(f"Saved profile picture to cache: {cache_path}")
+                            except Exception as e:
+                                logger.warning(f"Error saving profile picture to cache: {e}")
+                            
+                            # Update UI in main thread
+                            def update_with_fresh_photo():
+                                self.update_profile_picture(profile_label, photo)
+                            QTimer.singleShot(0, update_with_fresh_photo)
+                            logger.info(f"Loaded fresh profile picture for channel: {channel.get('name')}")
+                        else:
+                            logger.info(f"No valid profile photo found for channel: {channel.get('name')} - keeping gradient")
+                    else:
+                        logger.info(f"No profile photo available for channel: {channel.get('name')} - keeping gradient")
+                except Exception as e:
+                    logger.warning(f"Error fetching profile picture from Telegram for {channel.get('name')}: {e}")
+            else:
+                logger.info(f"Telegram manager not available - keeping gradient for {channel.get('name')}")
+                
+        except Exception as e:
+            logger.error(f"Error getting profile picture for channel {channel.get('name')}: {e}")
+            # Ensure gradient fallback is maintained
+            def set_gradient_fallback():
+                self.set_gradient_fallback(profile_label, channel)
+            QTimer.singleShot(0, set_gradient_fallback)
+    
+    def test_profile_picture_loading(self):
+        """Test function to debug profile picture loading"""
+        try:
+            logger.info("=== Testing Profile Picture Loading ===")
+            
+            # Test with a known channel ID from the directory
+            test_channel = {
+                "id": 1122501426,
+                "name": "Test Channel",
+                "username": "test"
+            }
+            
+            # Create a test label
+            test_label = QLabel()
+            test_label.setFixedSize(48, 48)
+            
+            logger.info(f"Testing with channel: {test_channel}")
+            
+            # Test the loading function
+            self.load_channel_profile_picture(test_label, test_channel)
+            
+            logger.info("=== Profile Picture Loading Test Complete ===")
+            
+        except Exception as e:
+            logger.error(f"Error in profile picture loading test: {e}")
+    
+    def debug_profile_picture_paths(self):
+        """Debug function to check profile picture paths"""
+        try:
+            logger.info("=== Debugging Profile Picture Paths ===")
+            
+            # Get current working directory
+            cwd = os.getcwd()
+            logger.info(f"Current working directory: {cwd}")
+            
+            # Get script directory
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            logger.info(f"Script directory: {script_dir}")
+            
+            # Check if channel_photos directory exists
+            channel_photos_dir = os.path.join(script_dir, "channel_photos")
+            logger.info(f"Channel photos directory: {channel_photos_dir}")
+            logger.info(f"Channel photos directory exists: {os.path.exists(channel_photos_dir)}")
+            
+            if os.path.exists(channel_photos_dir):
+                # List some files
+                files = os.listdir(channel_photos_dir)
+                logger.info(f"Found {len(files)} files in channel_photos directory")
+                for i, file in enumerate(files[:5]):  # Show first 5 files
+                    logger.info(f"  {i+1}. {file}")
+            
+            # Test a specific file path
+            test_path = os.path.join(script_dir, "channel_photos", "channel_1122501426.jpg")
+            logger.info(f"Test path: {test_path}")
+            logger.info(f"Test path exists: {os.path.exists(test_path)}")
+            
+            if os.path.exists(test_path):
+                file_size = os.path.getsize(test_path)
+                logger.info(f"Test file size: {file_size} bytes")
+            
+            logger.info("=== Profile Picture Paths Debug Complete ===")
+            
+        except Exception as e:
+            logger.error(f"Error in profile picture paths debug: {e}")
+    
+    def update_profile_picture(self, profile_label, photo_bytes):
+        """Update profile picture in UI with perfect circular design and gradient border"""
+        try:
+            # Convert bytes to QPixmap
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(photo_bytes):
+                logger.warning("Failed to load profile picture data")
+                return
+            
+            # Scale to fit the label (56x56 for new design)
+            scaled_pixmap = pixmap.scaled(56, 56, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            
+            # Create circular mask with enhanced gradient border
+            mask = QPixmap(56, 56)
+            mask.fill(Qt.transparent)
+            
+            painter = QPainter(mask)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            
+            # Create enhanced gradient border with conical gradient
+            gradient = QConicalGradient(28, 28, 0)
+            gradient.setColorAt(0, QColor("#f27d03"))
+            gradient.setColorAt(0.25, QColor("#ff8a1a"))
+            gradient.setColorAt(0.5, QColor("#e07000"))
+            gradient.setColorAt(0.75, QColor("#f27d03"))
+            gradient.setColorAt(1, QColor("#ff8a1a"))
+            
+            # Draw gradient border
+            painter.setBrush(QBrush(gradient))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(0, 0, 56, 56)
+            
+            # Create circular clip path for the profile picture
+            clip_path = QPainterPath()
+            clip_path.addEllipse(3, 3, 50, 50)
+            painter.setClipPath(clip_path)
+            
+            # Draw the profile picture with proper centering
+            painter.drawPixmap(3, 3, 50, 50, scaled_pixmap)
+            
+            painter.end()
+            
+            # Set the masked pixmap and ensure circular styling
+            profile_label.setPixmap(mask)
+            profile_label.setStyleSheet("""
+                QLabel {
+                    border-radius: 28px;
+                    border: none;
+                    background-color: transparent;
+                    min-width: 56px;
+                    max-width: 56px;
+                    min-height: 56px;
+                    max-height: 56px;
+                }
+            """)
+            
+            # Clear any text that might interfere with the image
+            profile_label.setText("")
+            
+            logger.info(f"Successfully updated profile picture with perfect circular design")
+        except Exception as e:
+            logger.error(f"Error updating profile picture: {e}")
+            # Fallback to gradient if image loading fails
+            self.set_gradient_fallback(profile_label, {"name": "Unknown"})
+    
     def create_no_channels_widget(self):
-        """Create a simple widget for when no channels are available"""
+        """Create a modern branded widget for when no channels are available"""
         container = QWidget()
-        container.setFixedSize(400, 60)  # Smaller, more compact
+        container.setFixedHeight(80)
         container.setStyleSheet("""
             QWidget {
-                background-color: transparent;
-                border: none;
-                margin: 2px;
+                background-color: #0d111f;
+                border: 2px dashed #1c243b;
+                border-radius: 12px;
+                margin: 8px 0px;
             }
         """)
         
         layout = QHBoxLayout(container)
         layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(8)
+        layout.setSpacing(16)
         
-        # Simple icon
+        # Modern icon with coral theme
         icon_label = QLabel("📡")
         icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setStyleSheet("font-size: 16px;")
-        
-        # Text
-        text_label = QLabel("No channels available - Connect to Telegram to see your channels")
-        text_label.setAlignment(Qt.AlignCenter)
-        text_label.setStyleSheet("""
+        icon_label.setStyleSheet("""
             QLabel {
-                font-size: 12px;
-                color: #6c7b7f;
+                font-size: 24px;
+                color: #f27d03;
+                background-color: transparent;
+                border: none;
             }
         """)
         
+        # Modern text with better typography
+        text_label = QLabel("No channels available")
+        text_label.setAlignment(Qt.AlignCenter)
+        text_label.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                font-weight: 500;
+                color: #f0f4f9;
+                background-color: transparent;
+                border: none;
+            }
+        """)
+        
+        # Subtitle
+        subtitle_label = QLabel("Connect to Telegram to see your channels")
+        subtitle_label.setAlignment(Qt.AlignCenter)
+        subtitle_label.setStyleSheet("""
+            QLabel {
+                font-size: 11px;
+                color: #9ca6b8;
+                background-color: transparent;
+                border: none;
+            }
+        """)
+        
+        # Create vertical layout for text
+        text_container = QWidget()
+        text_container.setStyleSheet("background-color: transparent; border: none;")
+        text_layout = QVBoxLayout(text_container)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(2)
+        text_layout.addWidget(text_label)
+        text_layout.addWidget(subtitle_label)
+        
         layout.addWidget(icon_label)
-        layout.addWidget(text_label)
+        layout.addWidget(text_container)
         
         return container
 
@@ -4110,15 +4988,66 @@ class TelegramPage(QWidget):
         
     def filter_channels(self):
         """Filter channels based on search text"""
-        search_text = self.channel_search.text().lower()
-        for i in range(self.grid_layout.count()):
-            widget = self.grid_layout.itemAt(i).widget()
-            if widget and hasattr(widget, 'findChild'):
-                # Find the name label within the channel widget
-                name_label = widget.findChild(QLabel)
-                if name_label:
-                    channel_name = name_label.text().lower()
-                    widget.setVisible(search_text in channel_name)
+        try:
+            search_text = self.channel_search.text().lower().strip()
+            logger.info(f"Filtering channels with search text: '{search_text}'")
+            
+            # If search is empty, show all channels
+            if not search_text:
+                self.show_all_channels()
+                return
+            
+            for i in range(self.grid_layout.count()):
+                widget = self.grid_layout.itemAt(i).widget()
+                if widget and hasattr(widget, 'findChild'):
+                    # Find all QLabel widgets within the channel widget
+                    labels = widget.findChildren(QLabel)
+                    
+                    # Look for the name label (first QLabel should be the channel name)
+                    channel_name = ""
+                    for label in labels:
+                        text = label.text().strip()
+                        # Skip empty labels and username labels (which start with @)
+                        if text and not text.startswith('@'):
+                            channel_name = text
+                            break
+                    
+                    if channel_name:
+                        # Check if search text matches channel name or username
+                        username = ""
+                        for label in labels:
+                            text = label.text().strip()
+                            if text.startswith('@'):
+                                username = text[1:]  # Remove @ symbol
+                                break
+                        
+                        # Show widget if search text matches name or username
+                        name_match = search_text in channel_name.lower()
+                        username_match = search_text in username.lower()
+                        
+                        widget.setVisible(name_match or username_match)
+                        
+                        if name_match or username_match:
+                            logger.debug(f"Channel '{channel_name}' matches search '{search_text}'")
+                    else:
+                        # If no name found, hide the widget
+                        widget.setVisible(False)
+                        
+        except Exception as e:
+            logger.error(f"Error filtering channels: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    def show_all_channels(self):
+        """Show all channels (used when search is cleared)"""
+        try:
+            for i in range(self.grid_layout.count()):
+                widget = self.grid_layout.itemAt(i).widget()
+                if widget:
+                    widget.setVisible(True)
+            logger.info("All channels shown")
+        except Exception as e:
+            logger.error(f"Error showing all channels: {e}")
                 
     def update_responsive_layout(self, width, height):
         """Update layout to be responsive to window size"""
@@ -4213,7 +5142,7 @@ class TelegramPage(QWidget):
             logger.error(f"Error updating telegram page responsive layout: {e}")
             
     def update_grid_layout(self, max_cols):
-        """Update grid layout to use optimal number of columns"""
+        """Update grid layout to use single column for simpler design"""
         try:
             if not hasattr(self, 'grid_layout'):
                 return
@@ -4229,14 +5158,9 @@ class TelegramPage(QWidget):
             for i in reversed(range(self.grid_layout.count())):
                 self.grid_layout.itemAt(i).widget().setParent(None)
                 
-            # Re-add widgets with new column layout
-            row, col = 0, 0
-            for widget in widgets:
-                self.grid_layout.addWidget(widget, row, col)
-                col += 1
-                if col >= max_cols:
-                    col = 0
-                    row += 1
+            # Re-add widgets in single column layout
+            for i, widget in enumerate(widgets):
+                self.grid_layout.addWidget(widget, i, 0)
                     
         except Exception as e:
             logger.error(f"Error updating grid layout: {e}")
@@ -5246,39 +6170,84 @@ class DashboardPage(QWidget):
         status_layout.addWidget(signal_group)
         status_layout.addStretch()
 
-        # History tab - COMPACT REDESIGN
+        # History tab - REDESIGNED WITH JOURNALING
         history_tab = QWidget()
         history_layout = QVBoxLayout(history_tab)
-        history_layout.setContentsMargins(0, 0, 0, 0)
-        history_layout.setSpacing(0)
+        history_layout.setContentsMargins(10, 10, 10, 10)
+        history_layout.setSpacing(10)
 
-        # Compact Header with inline controls
+        # Clean Header with text buttons
         header_layout = QHBoxLayout()
         
         # Title
-        history_title = QLabel("📋 Trade History")
-        history_title.setProperty("class", "title")
+        history_title = QLabel("Trade History & Journal")
+        history_title.setStyleSheet("""
+            QLabel {
+                font-size: 18px;
+                font-weight: bold;
+                color: #f0f4f9;
+            }
+        """)
         header_layout.addWidget(history_title)
         
         header_layout.addStretch()
         
-        # Compact action buttons
-        self.refresh_history_btn = QPushButton("🔄")
+        # Text-based action buttons (no icons)
+        self.refresh_history_btn = QPushButton("Refresh")
         self.refresh_history_btn.setToolTip("Refresh History")
-        self.refresh_history_btn.setFixedSize(32, 32)
-        self.refresh_history_btn
+        self.refresh_history_btn.setFixedSize(80, 32)
+        self.refresh_history_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2a2f3e;
+                color: #f0f4f9;
+                border: 1px solid #4a4f5e;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #3a3f4e;
+                border-color: #f27d03;
+            }
+        """)
         self.refresh_history_btn.clicked.connect(self.refresh_history)
         
-        self.export_history_btn = QPushButton("📊")
-        self.export_history_btn.setToolTip("Export CSV")
-        self.export_history_btn.setFixedSize(32, 32)
-        self.export_history_btn
+        self.export_history_btn = QPushButton("Export")
+        self.export_history_btn.setToolTip("Export to CSV")
+        self.export_history_btn.setFixedSize(80, 32)
+        self.export_history_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2a2f3e;
+                color: #f0f4f9;
+                border: 1px solid #4a4f5e;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #3a3f4e;
+                border-color: #f27d03;
+            }
+        """)
         self.export_history_btn.clicked.connect(self.export_history)
         
-        self.clear_history_btn = QPushButton("🗑️")
-        self.clear_history_btn.setToolTip("Clear History")
-        self.clear_history_btn.setFixedSize(32, 32)
-        self.clear_history_btn
+        self.clear_history_btn = QPushButton("Clear All")
+        self.clear_history_btn.setToolTip("Clear All History")
+        self.clear_history_btn.setFixedSize(80, 32)
+        self.clear_history_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc2626;
+                color: white;
+                border: 1px solid #dc2626;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #b91c1c;
+                border-color: #b91c1c;
+            }
+        """)
         self.clear_history_btn.clicked.connect(self.clear_history)
         
         header_layout.addWidget(self.refresh_history_btn)
@@ -5287,150 +6256,204 @@ class DashboardPage(QWidget):
         
         history_layout.addLayout(header_layout)
 
-        # Compact Statistics Row (3x2 grid)
-        # Statistics Row (No Card)
+        # Enhanced Statistics Row
         stats_layout = QHBoxLayout()
-        stats_layout.setSpacing(20)
-        stats_layout.setContentsMargins(0, 5, 0, 5)
+        stats_layout.setSpacing(15)
+        stats_layout.setContentsMargins(0, 10, 0, 10)
+        
+        # Statistics with better styling
+        stats_style = """
+            QLabel {
+                font-size: 13px;
+                font-weight: 600;
+                color: #f0f4f9;
+                padding: 8px 12px;
+                background-color: #1a1f2e;
+                border: 1px solid #2a2f3e;
+                border-radius: 6px;
+            }
+        """
         
         # Total Trades
         self.total_trades_label = QLabel("Total: 0")
-        self.total_trades_label.setStyleSheet("font-size: 12px; font-weight: bold;")
+        self.total_trades_label.setStyleSheet(stats_style)
         stats_layout.addWidget(self.total_trades_label)
         
         # Win Rate
         self.win_rate_label = QLabel("Win Rate: 0%")
-        self.win_rate_label.setStyleSheet("font-size: 12px; font-weight: bold;")
+        self.win_rate_label.setStyleSheet(stats_style)
         stats_layout.addWidget(self.win_rate_label)
         
         # Total Profit
         self.total_profit_label = QLabel("Total P&L: $0.00")
-        self.total_profit_label.setStyleSheet("font-size: 12px; font-weight: bold;")
+        self.total_profit_label.setStyleSheet(stats_style)
         stats_layout.addWidget(self.total_profit_label)
         
         # Average Profit
         self.avg_profit_label = QLabel("Avg: $0.00")
-        self.avg_profit_label.setStyleSheet("font-size: 12px; font-weight: bold;")
+        self.avg_profit_label.setStyleSheet(stats_style)
         stats_layout.addWidget(self.avg_profit_label)
         
         # Max Drawdown
         self.max_dd_label = QLabel("Max DD: $0.00")
-        self.max_dd_label.setStyleSheet("font-size: 12px; font-weight: bold;")
+        self.max_dd_label.setStyleSheet(stats_style)
         stats_layout.addWidget(self.max_dd_label)
         
         # Best Trade
         self.best_trade_label = QLabel("Best: $0.00")
-        self.best_trade_label.setStyleSheet("font-size: 12px; font-weight: bold;")
+        self.best_trade_label.setStyleSheet(stats_style)
         stats_layout.addWidget(self.best_trade_label)
         
         stats_layout.addStretch()
         
         history_layout.addLayout(stats_layout)
 
-        # Compact Filters Row (Minimized)
+        # Enhanced Filters Row
         filters_frame = QFrame()
-        filters_frame
+        filters_frame.setStyleSheet("""
+            QFrame {
+                background-color: #1a1f2e;
+                border: 1px solid #2a2f3e;
+                border-radius: 6px;
+                padding: 8px;
+            }
+        """)
         filters_layout = QHBoxLayout(filters_frame)
-        filters_layout.setSpacing(4)
-        filters_layout.setContentsMargins(4, 2, 4, 2)
+        filters_layout.setSpacing(10)
+        filters_layout.setContentsMargins(10, 8, 10, 8)
         
-        # Date filters (Minimized)
+        # Filter labels with consistent styling
+        filter_label_style = "font-size: 12px; font-weight: 600; color: #f0f4f9;"
+        filter_input_style = """
+            QDateEdit, QComboBox {
+                background-color: #0d111f;
+                border: 1px solid #4a4f5e;
+                border-radius: 4px;
+                color: #f0f4f9;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QDateEdit:focus, QComboBox:focus {
+                border-color: #f27d03;
+            }
+        """
+        
+        # Date filters
         from_label = QLabel("From:")
-        from_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+        from_label.setStyleSheet(filter_label_style)
         filters_layout.addWidget(from_label)
         
         self.date_from = QDateEdit()
         self.date_from.setDate(QDate.currentDate().addDays(-30))
         self.date_from.setCalendarPopup(True)
-        self.date_from.setFixedWidth(80)
+        self.date_from.setFixedWidth(100)
+        self.date_from.setStyleSheet(filter_input_style)
         filters_layout.addWidget(self.date_from)
         
         to_label = QLabel("To:")
+        to_label.setStyleSheet(filter_label_style)
         filters_layout.addWidget(to_label)
         
         self.date_to = QDateEdit()
         self.date_to.setDate(QDate.currentDate())
         self.date_to.setCalendarPopup(True)
-        self.date_to.setFixedWidth(80)
+        self.date_to.setFixedWidth(100)
+        self.date_to.setStyleSheet(filter_input_style)
         filters_layout.addWidget(self.date_to)
         
         symbol_label = QLabel("Symbol:")
+        symbol_label.setStyleSheet(filter_label_style)
         filters_layout.addWidget(symbol_label)
         
         self.symbol_filter = QComboBox()
         self.symbol_filter.addItem("All")
-        self.symbol_filter.setFixedWidth(60)
+        self.symbol_filter.setFixedWidth(80)
+        self.symbol_filter.setStyleSheet(filter_input_style)
         filters_layout.addWidget(self.symbol_filter)
         
         status_label = QLabel("Status:")
+        status_label.setStyleSheet(filter_label_style)
         filters_layout.addWidget(status_label)
         
         self.status_filter = QComboBox()
         self.status_filter.addItems(["All", "Executed", "Failed", "Pending"])
-        self.status_filter.setFixedWidth(60)
+        self.status_filter.setFixedWidth(80)
+        self.status_filter.setStyleSheet(filter_input_style)
         filters_layout.addWidget(self.status_filter)
         
         filters_layout.addStretch()
         
         history_layout.addWidget(filters_frame)
 
-        # Compact History Table
+        # Enhanced History Table with Journaling
         self.history_table = QTableWidget()
-        self.history_table.setColumnCount(11)  # Increased from 10 to 11
+        self.history_table.setColumnCount(11)
         self.history_table.setHorizontalHeaderLabels([
-            "Time", "Symbol", "Type", "Entry", "SL", "TP", "Lot", "Status", "P&L", "Closure", "Notes"
+            "Time", "Symbol", "Type", "Entry", "SL", "TP", "Lot", "Status", "P&L", "Closure", "Journal"
         ])
         
-        # Compact column widths
-        self.history_table.setColumnWidth(0, 80)   # Time
-        self.history_table.setColumnWidth(1, 60)   # Symbol
-        self.history_table.setColumnWidth(2, 60)   # Type
-        self.history_table.setColumnWidth(3, 70)   # Entry
-        self.history_table.setColumnWidth(4, 60)   # SL
-        self.history_table.setColumnWidth(5, 60)   # TP
-        self.history_table.setColumnWidth(6, 50)   # Lot
-        self.history_table.setColumnWidth(7, 70)   # Status
-        self.history_table.setColumnWidth(8, 70)   # P&L
-        self.history_table.setColumnWidth(9, 70)   # Closure
-        self.history_table.setColumnWidth(10, 100) # Notes
+        # Optimized column widths based on content
+        self.history_table.setColumnWidth(0, 90)   # Time - needs more space for full timestamp
+        self.history_table.setColumnWidth(1, 70)   # Symbol - currency pairs need more space
+        self.history_table.setColumnWidth(2, 50)   # Type - just "Buy" or "Sell"
+        self.history_table.setColumnWidth(3, 75)   # Entry - price with decimals
+        self.history_table.setColumnWidth(4, 65)   # SL - stop loss price
+        self.history_table.setColumnWidth(5, 65)   # TP - take profit price
+        self.history_table.setColumnWidth(6, 45)   # Lot - small numbers
+        self.history_table.setColumnWidth(7, 70)   # Status - "Executed", "Failed", etc.
+        self.history_table.setColumnWidth(8, 75)   # P&L - profit/loss amounts
+        self.history_table.setColumnWidth(9, 80)   # Closure - close time
+        self.history_table.setColumnWidth(10, 200) # Journal - much more space for notes
         
         self.history_table.horizontalHeader().setStretchLastSection(True)
-        self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.history_table.setEditTriggers(QTableWidget.DoubleClicked)  # Allow editing for journal
         self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.history_table.setAlternatingRowColors(True)
         self.history_table.setSortingEnabled(True)
-        self.history_table.verticalHeader().setDefaultSectionSize(30)  # Increased row height
+        self.history_table.verticalHeader().setDefaultSectionSize(35)  # Slightly taller for journal entries
         self.history_table.setStyleSheet("""
             QTableWidget {
-                font-size: 11px;
-                gridline-color: #d0d0d0;
-                background-color: white;
-                color: #2d2d2d;
-                alternate-background-color: #f8f9fa;
+                font-size: 12px;
+                gridline-color: #2a2f3e;
+                background-color: #0d111f;
+                color: #f0f4f9;
+                alternate-background-color: #131a2d;
+                border: 1px solid #2a2f3e;
+                border-radius: 6px;
             }
             QTableWidget::item {
-                padding: 4px;
+                padding: 6px;
                 border: none;
             }
             QTableWidget::item:selected {
-                background-color: #007bff;
+                background-color: #f27d03;
                 color: white;
             }
+            QTableWidget::item:focus {
+                background-color: #1a1f2e;
+                border: 1px solid #f27d03;
+            }
             QHeaderView::section {
-                background-color: #e9ecef;
-                color: #495057;
-                padding: 8px;
-                border: 1px solid #d0d0d0;
+                background-color: #1a1f2e;
+                color: #f0f4f9;
+                padding: 10px;
+                border: 1px solid #2a2f3e;
                 border-left: none;
                 font-weight: bold;
-                font-size: 11px;
+                font-size: 12px;
             }
             QHeaderView::section:hover {
-                background-color: #dee2e6;
+                background-color: #2a2f3e;
             }
         """)
         
+        # Connect double-click for journal editing
+        self.history_table.cellDoubleClicked.connect(self.edit_journal_entry)
+        
         history_layout.addWidget(self.history_table)
+        
+        # Add journal editing dialog
+        self.journal_dialog = None
         
         # Connect filter signals
         self.date_from.dateChanged.connect(self.apply_filters)
@@ -6686,15 +7709,21 @@ class DashboardPage(QWidget):
                 else:
                     self.history_table.setItem(row, 6, QTableWidgetItem("N/A"))
                 
-                # Status
+                # Status with color coding
                 status = trade.get('status', 'N/A')
                 status_item = QTableWidgetItem(status)
                 if status == "Executed":
-                    status_item.setForeground(QColor(0))
+                    status_item.setForeground(QColor("#1d9e4a"))  # Green
+                    status_item.setBackground(QColor("#1a1f2e"))
                 elif status == "Failed":
-                    status_item.setForeground(QColor(0))
+                    status_item.setForeground(QColor("#dc2626"))  # Red
+                    status_item.setBackground(QColor("#1a1f2e"))
                 elif status == "Pending":
-                    status_item.setForeground(QColor(0))
+                    status_item.setForeground(QColor("#f59e0b"))  # Orange
+                    status_item.setBackground(QColor("#1a1f2e"))
+                else:
+                    status_item.setForeground(QColor("#f0f4f9"))  # Default white
+                    status_item.setBackground(QColor("#1a1f2e"))
                 self.history_table.setItem(row, 7, status_item)
                 
                 # Profit/Loss (with live calculation)
@@ -6724,11 +7753,22 @@ class DashboardPage(QWidget):
                     closure_item.setForeground(QColor(0))
                 self.history_table.setItem(row, 9, closure_item)
                 
-                # Notes (shortened)
+                # Journal with placeholder text
                 notes = trade.get('notes', '')
-                if len(notes) > 20:
-                    notes = notes[:17] + "..."
-                self.history_table.setItem(row, 10, QTableWidgetItem(notes))
+                if not notes or notes.strip() == '':
+                    # Create placeholder item with faded text
+                    journal_item = QTableWidgetItem("Write your journal here...")
+                    journal_item.setForeground(QColor("#6b7280"))  # Faded gray color
+                    journal_item.setBackground(QColor("#1a1f2e"))
+                else:
+                    # Show actual notes (shortened if too long)
+                    if len(notes) > 30:
+                        notes = notes[:27] + "..."
+                    journal_item = QTableWidgetItem(notes)
+                    journal_item.setForeground(QColor("#f0f4f9"))  # Normal white color
+                    journal_item.setBackground(QColor("#1a1f2e"))
+                
+                self.history_table.setItem(row, 10, journal_item)
                 
         except Exception as e:
             logger.error(f"Error updating history table: {str(e)}")
@@ -6835,6 +7875,89 @@ class DashboardPage(QWidget):
             logger.error(f"Error updating history statistics: {str(e)}")
 
     def export_history(self):
+        """Export history with format choice"""
+        try:
+            # Create export choice dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Export Trade History")
+            dialog.setFixedSize(400, 200)
+            dialog.setStyleSheet("""
+                QDialog {
+                    background-color: #0d111f;
+                    color: #f0f4f9;
+                }
+                QLabel {
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #f0f4f9;
+                    margin-bottom: 10px;
+                }
+                QPushButton {
+                    background-color: #2a2f3e;
+                    color: #f0f4f9;
+                    border: 1px solid #4a4f5e;
+                    border-radius: 6px;
+                    padding: 12px 20px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    margin: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #3a3f4e;
+                    border-color: #f27d03;
+                }
+                QPushButton#csv {
+                    background-color: #1d9e4a;
+                    border-color: #1d9e4a;
+                    color: white;
+                }
+                QPushButton#csv:hover {
+                    background-color: #16a34a;
+                }
+                QPushButton#pdf {
+                    background-color: #dc2626;
+                    border-color: #dc2626;
+                    color: white;
+                }
+                QPushButton#pdf:hover {
+                    background-color: #b91c1c;
+                }
+            """)
+            
+            layout = QVBoxLayout(dialog)
+            
+            # Add label
+            label = QLabel("Choose export format:")
+            layout.addWidget(label)
+            
+            # Add buttons
+            button_layout = QHBoxLayout()
+            
+            csv_btn = QPushButton("Export to CSV")
+            csv_btn.setObjectName("csv")
+            csv_btn.clicked.connect(lambda: self.export_to_csv(dialog))
+            button_layout.addWidget(csv_btn)
+            
+            pdf_btn = QPushButton("Export to PDF")
+            pdf_btn.setObjectName("pdf")
+            pdf_btn.clicked.connect(lambda: self.export_to_pdf(dialog))
+            button_layout.addWidget(pdf_btn)
+            
+            layout.addLayout(button_layout)
+            
+            # Add cancel button
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.clicked.connect(dialog.reject)
+            layout.addWidget(cancel_btn)
+            
+            # Show dialog
+            dialog.exec_()
+            
+        except Exception as e:
+            logger.error(f"Error showing export dialog: {str(e)}")
+            QMessageBox.critical(self, "Export Error", f"Failed to show export dialog: {str(e)}")
+    
+    def export_to_csv(self, dialog=None):
         """Export history to CSV file"""
         try:
             from datetime import datetime
@@ -6844,12 +7967,14 @@ class DashboardPage(QWidget):
             
             if not filtered_trades:
                 QMessageBox.information(self, "Export", "No trades to export!")
+                if dialog:
+                    dialog.accept()
                 return
             
             with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
                 import csv
                 fieldnames = ['Date/Time', 'Channel', 'Symbol', 'Type', 'Entry Price', 'SL', 'TP', 
-                            'Lot Size', 'Status', 'Profit/Loss', 'Notes']
+                            'Lot Size', 'Status', 'Profit/Loss', 'Journal']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 
                 writer.writeheader()
@@ -6885,14 +8010,159 @@ class DashboardPage(QWidget):
                         'Lot Size': str(lot_size),
                         'Status': trade.get('status', 'N/A'),
                         'Profit/Loss': f"${trade.get('profit', 0):.2f}",
-                        'Notes': trade.get('notes', '')
+                        'Journal': trade.get('notes', '')
                     })
             
             QMessageBox.information(self, "Export Successful", f"History exported to {filename}")
+            if dialog:
+                dialog.accept()
             
         except Exception as e:
-            logger.error(f"Error exporting history: {str(e)}")
-            QMessageBox.critical(self, "Export Error", f"Failed to export history: {str(e)}")
+            logger.error(f"Error exporting to CSV: {str(e)}")
+            QMessageBox.critical(self, "Export Error", f"Failed to export to CSV: {str(e)}")
+    
+    def export_to_pdf(self, dialog=None):
+        """Export history to PDF file"""
+        try:
+            from datetime import datetime
+            filename = f"trade_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            
+            filtered_trades = self.get_filtered_trades()
+            
+            if not filtered_trades:
+                QMessageBox.information(self, "Export", "No trades to export!")
+                if dialog:
+                    dialog.accept()
+                return
+            
+            # Try to import reportlab for PDF generation
+            try:
+                from reportlab.lib.pagesizes import letter, A4
+                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.units import inch
+                from reportlab.lib import colors
+            except ImportError:
+                QMessageBox.warning(self, "PDF Export", 
+                    "PDF export requires 'reportlab' library. Please install it with: pip install reportlab\n\n"
+                    "For now, you can use CSV export instead.")
+                if dialog:
+                    dialog.accept()
+                return
+            
+            # Create PDF document
+            doc = SimpleDocTemplate(filename, pagesize=A4)
+            story = []
+            
+            # Add title
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=16,
+                spaceAfter=20,
+                alignment=1  # Center alignment
+            )
+            title = Paragraph("Trade History Report", title_style)
+            story.append(title)
+            story.append(Spacer(1, 20))
+            
+            # Prepare table data
+            table_data = [['Time', 'Symbol', 'Type', 'Entry', 'SL', 'TP', 'Lot', 'Status', 'P&L', 'Journal']]
+            
+            for trade in filtered_trades:
+                # Format time
+                timestamp = trade.get('timestamp', 'N/A')
+                if timestamp != 'N/A':
+                    try:
+                        dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+                        time_str = dt.strftime('%H:%M')
+                    except:
+                        time_str = timestamp
+                else:
+                    time_str = 'N/A'
+                
+                # Format entry price
+                entry_price = trade.get('entry_price', 'N/A')
+                if isinstance(entry_price, (list, tuple)):
+                    entry_price = f"{min(entry_price):.4f}"
+                elif entry_price is None:
+                    entry_price = "Market"
+                elif entry_price != 'N/A':
+                    try:
+                        entry_price = f"{float(entry_price):.4f}"
+                    except:
+                        entry_price = str(entry_price)
+                
+                # Format TP
+                tp = trade.get('tp', 'N/A')
+                tps = trade.get('tps', [])
+                if tps:
+                    tp = f"{len(tps)} TPs"
+                elif tp != "N/A" and tp is not None:
+                    try:
+                        tp = f"{float(tp):.4f}"
+                    except:
+                        tp = str(tp)
+                
+                # Format lot size
+                lot_size = trade.get('lot_size', 'N/A')
+                if lot_size != "N/A" and lot_size is not None:
+                    lot_size = f"{lot_size:.2f}"
+                
+                # Format profit
+                profit = trade.get('profit', 0)
+                profit_str = f"${profit:.2f}"
+                
+                # Get journal notes
+                notes = trade.get('notes', '')
+                if not notes:
+                    notes = "No journal entry"
+                
+                row = [
+                    time_str,
+                    trade.get('symbol', 'N/A'),
+                    trade.get('order_type', 'N/A'),
+                    str(entry_price),
+                    str(trade.get('sl', 'N/A')),
+                    str(tp),
+                    str(lot_size),
+                    trade.get('status', 'N/A'),
+                    profit_str,
+                    notes[:50] + "..." if len(notes) > 50 else notes
+                ]
+                table_data.append(row)
+            
+            # Create table
+            table = Table(table_data, colWidths=[0.6*inch, 0.8*inch, 0.5*inch, 0.6*inch, 0.6*inch, 0.6*inch, 0.4*inch, 0.6*inch, 0.6*inch, 1.2*inch])
+            
+            # Style the table
+            table_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('ALIGN', (8, 1), (8, -1), 'RIGHT'),  # Right align P&L column
+            ])
+            table.setStyle(table_style)
+            
+            story.append(table)
+            
+            # Build PDF
+            doc.build(story)
+            
+            QMessageBox.information(self, "Export Successful", f"History exported to {filename}")
+            if dialog:
+                dialog.accept()
+            
+        except Exception as e:
+            logger.error(f"Error exporting to PDF: {str(e)}")
+            QMessageBox.critical(self, "Export Error", f"Failed to export to PDF: {str(e)}")
 
     def clear_history(self):
         """Clear all trade history"""
@@ -6906,17 +8176,127 @@ class DashboardPage(QWidget):
             )
             
             if reply == QMessageBox.Yes:
-                self.trade_history.history = []
-                self.trade_history.save()
+                # Clear the trade history
+                self.parent.trade_history.history = []
+                self.parent.trade_history.save()
+                
+                # Update the UI
                 if hasattr(self, 'dashboard_page'):
                     self.dashboard_page.update_history_table()
                     self.dashboard_page.update_history_statistics()
                     self.dashboard_page.update_symbol_filter()
+                
+                # Also update directly if we have access to history table
+                if hasattr(self, 'history_table'):
+                    self.update_history_table()
+                    self.update_history_statistics()
+                    self.update_symbol_filter()
+                
                 QMessageBox.information(self, "History Cleared", "All trade history has been cleared.")
                 
         except Exception as e:
             logger.error(f"Error clearing history: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to clear history: {str(e)}")
+    
+    def edit_journal_entry(self, row, column):
+        """Edit journal entry for a specific trade"""
+        try:
+            # Only allow editing the Journal column (column 10)
+            if column != 10:
+                return
+            
+            # Get the current journal text
+            current_item = self.history_table.item(row, column)
+            current_text = current_item.text() if current_item else ""
+            
+            # Create a dialog for editing
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Edit Journal Entry")
+            dialog.setFixedSize(500, 300)
+            dialog.setStyleSheet("""
+                QDialog {
+                    background-color: #0d111f;
+                    color: #f0f4f9;
+                }
+                QLabel {
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #f0f4f9;
+                }
+                QTextEdit {
+                    background-color: #1a1f2e;
+                    border: 1px solid #2a2f3e;
+                    border-radius: 4px;
+                    color: #f0f4f9;
+                    font-size: 12px;
+                    padding: 8px;
+                }
+                QPushButton {
+                    background-color: #2a2f3e;
+                    color: #f0f4f9;
+                    border: 1px solid #4a4f5e;
+                    border-radius: 4px;
+                    padding: 8px 16px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #3a3f4e;
+                    border-color: #f27d03;
+                }
+                QPushButton#save {
+                    background-color: #f27d03;
+                    border-color: #f27d03;
+                    color: white;
+                }
+                QPushButton#save:hover {
+                    background-color: #e07000;
+                }
+            """)
+            
+            layout = QVBoxLayout(dialog)
+            
+            # Add label
+            label = QLabel("Journal Entry (Trade Notes, Analysis, Lessons Learned):")
+            layout.addWidget(label)
+            
+            # Add text editor
+            text_edit = QTextEdit()
+            text_edit.setPlainText(current_text)
+            text_edit.setPlaceholderText("Enter your trade journal entry here...\n\nExamples:\n- Market analysis and reasoning\n- What went well/wrong\n- Lessons learned\n- Future improvements")
+            layout.addWidget(text_edit)
+            
+            # Add buttons
+            button_layout = QHBoxLayout()
+            button_layout.addStretch()
+            
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.clicked.connect(dialog.reject)
+            button_layout.addWidget(cancel_btn)
+            
+            save_btn = QPushButton("Save")
+            save_btn.setObjectName("save")
+            save_btn.clicked.connect(dialog.accept)
+            button_layout.addWidget(save_btn)
+            
+            layout.addLayout(button_layout)
+            
+            # Show dialog
+            if dialog.exec_() == QDialog.Accepted:
+                new_text = text_edit.toPlainText().strip()
+                
+                # Update the table
+                self.history_table.setItem(row, column, QTableWidgetItem(new_text))
+                
+                # Update the trade history data
+                if hasattr(self, 'trade_history') and row < len(self.trade_history.history):
+                    self.trade_history.history[row]['notes'] = new_text
+                    self.trade_history.save()
+                    logger.info(f"Updated journal entry for trade {row}")
+                
+        except Exception as e:
+            logger.error(f"Error editing journal entry: {e}")
+            QMessageBox.warning(self, "Error", f"Failed to edit journal entry: {str(e)}")
 
     def update_trade_history(self):
         """Update trade history display"""
@@ -8042,11 +9422,24 @@ class MainWindow(QMainWindow):
         self.history_timer.start(5000)
 
     def check_activation_status(self):
-        if self.settings.is_activated():
-            self.validate_license_at_startup()
-            self.show_telegram_page()
-        else:
-            # Reset activation page UI state before showing it
+        """Check if user is already activated and skip activation page if so"""
+        try:
+            is_activated = self.settings.is_activated()
+            logger.info(f"Checking activation status: {is_activated}")
+            
+            if is_activated:
+                logger.info("User is already activated, skipping activation page")
+                self.validate_license_at_startup()
+                self.show_telegram_page()
+            else:
+                logger.info("User is not activated, showing activation page")
+                # Reset activation page UI state before showing it
+                self.activation_page.reset_ui_state()
+                self.stacked_widget.setCurrentWidget(self.activation_page)
+                
+        except Exception as e:
+            logger.error(f"Error checking activation status: {e}")
+            # Fallback to showing activation page on error
             self.activation_page.reset_ui_state()
             self.stacked_widget.setCurrentWidget(self.activation_page)
 
@@ -8119,14 +9512,69 @@ class MainWindow(QMainWindow):
             self.activation_page.activation_result.emit(False, str(e), {})
 
     def validate_license_at_startup(self):
-        license_info = self.settings.get_license_info()
-        key = license_info.get("key")
-        machine_id = self.settings.settings.get("machine_id")
-        if key == "1234123412341234":
-            return
-        if not key or not machine_id:
-            return
-        threading.Thread(target=self.validate_license, args=(key,)).start()
+        """Validate license at startup to ensure it's still valid"""
+        try:
+            license_info = self.settings.get_license_info()
+            key = license_info.get("key")
+            machine_id = self.settings.settings.get("machine_id")
+            
+            if key == "1234123412341234":
+                logger.info("Bypass key detected, skipping validation")
+                return
+                
+            if not key or not machine_id:
+                logger.warning("No license key or machine ID found")
+                return
+                
+            logger.info("Validating license at startup...")
+            threading.Thread(target=self.validate_license, args=(key,), daemon=True).start()
+            
+        except Exception as e:
+            logger.error(f"Error in validate_license_at_startup: {e}")
+    
+    def reset_activation_status(self):
+        """Reset activation status - useful for testing or troubleshooting"""
+        try:
+            logger.info("Resetting activation status")
+            self.settings.settings["activated"] = False
+            self.settings.settings["license"] = {
+                "key": "",
+                "email": "",
+                "start_date": None,
+                "expiration_date": None,
+                "is_trial": False
+            }
+            self.settings.save()
+            logger.info("Activation status reset successfully")
+            
+            # Show activation page
+            self.activation_page.reset_ui_state()
+            self.stacked_widget.setCurrentWidget(self.activation_page)
+            
+        except Exception as e:
+            logger.error(f"Error resetting activation status: {e}")
+    
+    def get_activation_info(self):
+        """Get current activation information for debugging"""
+        try:
+            is_activated = self.settings.is_activated()
+            license_info = self.settings.get_license_info()
+            
+            info = {
+                "activated": is_activated,
+                "license_key": license_info.get("key", ""),
+                "email": license_info.get("email", ""),
+                "is_trial": license_info.get("is_trial", False),
+                "expiration_date": license_info.get("expiration_date", ""),
+                "machine_id": self.settings.settings.get("machine_id", "")
+            }
+            
+            logger.info(f"Activation info: {info}")
+            return info
+            
+        except Exception as e:
+            logger.error(f"Error getting activation info: {e}")
+            return {}
 
     def send_heartbeat(self):
         if not self.settings.is_activated():
@@ -8197,16 +9645,19 @@ class MainWindow(QMainWindow):
             logger.error("Dashboard page not available")
 
     def on_verification_sent(self):
-        self.telegram_page.phone_input.setEnabled(False)
-        self.telegram_page.code_input.setEnabled(True)
-        self.telegram_page.verify_btn.setEnabled(True)
-        self.telegram_page.change_number_btn.setVisible(True)
+        self.telegram_page.update_ui_for_verification_state()
         self.status_bar.showMessage("Verification code sent")
 
     def on_telegram_authenticated(self):
         self.settings.set_telegram_session(self.telegram_manager.session_string)
-        self.telegram_page.code_input.setEnabled(False)
-        self.telegram_page.verify_btn.setEnabled(False)
+        # Save phone number to settings for future reference
+        if hasattr(self.telegram_manager, 'phone') and self.telegram_manager.phone:
+            self.settings.settings['telegram_phone'] = self.telegram_manager.phone
+            self.settings.save()
+            logger.info(f"Saved phone number to settings: {self.telegram_manager.phone}")
+        
+        # Update UI to logged in state
+        self.telegram_page.update_ui_for_logged_in_state()
         self.telegram_page.next_btn.setEnabled(True)
         self.status_bar.showMessage("Telegram connected successfully!")
         self.telegram_manager.load_channels()
@@ -8224,8 +9675,7 @@ class MainWindow(QMainWindow):
 
     def on_telegram_error(self, error):
         QMessageBox.critical(self, "Telegram Error", error)
-        self.telegram_page.send_code_btn.setEnabled(True)
-        self.telegram_page.verify_btn.setEnabled(False)
+        self.telegram_page.update_ui_for_login_state()
         self.status_bar.showMessage(f"Error: {error}")
         self.update_connection_status()
 
