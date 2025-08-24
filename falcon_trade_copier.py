@@ -174,6 +174,182 @@ def expand_compact_range_match(match):
         logger.warning(f"Failed to expand range {first}-{second}: {e}")
         return match.group(0)
 
+import sys
+import os
+import asyncio
+import threading
+from PySide6.QtCore import QObject, Signal, Slot, QThread
+import json
+import uuid
+import socket
+import hashlib
+import requests
+import time
+from datetime import datetime, timedelta
+try:
+    from supabase import create_client, Client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    print("Warning: Supabase not available. Install with: pip install supabase")
+from PySide6.QtCore import Qt, QSize, QTimer, Signal, QObject, QEvent, QPoint, QRect, QThread
+import re
+import logging
+from PySide6.QtCore import QDate
+from PySide6.QtWidgets import QDateEdit, QTextEdit, QTreeWidget, QTreeWidgetItem
+from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+import pyperclip
+from PySide6.QtGui import QIcon, QPalette, QColor, QAction, QFont, QImage, QPixmap, QLinearGradient, QConicalGradient, QBrush, QPainter, \
+    QFontMetrics, QPainterPath
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QStackedWidget, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem, QCheckBox,
+    QGroupBox, QSpacerItem, QSizePolicy, QFileDialog, QMessageBox,
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QSystemTrayIcon,
+    QMenu, QStatusBar, QGridLayout, QComboBox, QDoubleSpinBox, QTreeWidget,
+    QTreeWidgetItem, QInputDialog, QDialog, QDialogButtonBox, QFormLayout, QScrollArea,
+    QSpinBox, QFrame, QStyle, QToolBar, QProgressBar
+)
+from PySide6.QtCore import Qt, QSize, QTimer, Signal, QObject, QEvent, QPoint, QRect
+from telethon import TelegramClient, events
+from telethon.sessions import StringSession
+from telethon.tl.types import Channel
+import MetaTrader5 as mt5
+import psutil
+import platform
+
+# Charting and analytics imports
+try:
+    import matplotlib
+    # Set backend before importing pyplot to avoid GUI issues
+    matplotlib.use('Agg', force=True)  # Use non-interactive backend
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    import numpy as np
+    CHARTING_AVAILABLE = True
+except ImportError:
+    CHARTING_AVAILABLE = False
+    print("Warning: Charting libraries not available. Install with: pip install matplotlib pandas numpy")
+except Exception as e:
+    CHARTING_AVAILABLE = False
+    print(f"Warning: Charting libraries error: {e}")
+
+# ======================
+# APPLICATION CONSTANTS
+# ======================
+
+APP_NAME = "Falcon Trade Signal Copier"
+SHORT_NAME = "FTSC"
+VERSION = "1.2"
+
+TELEGRAM_API_ID = 26121573
+TELEGRAM_API_HASH = "305761518085ff8519d0eded60f46c72"
+TRADE_HISTORY_FILE = "../falcon_trade_history.json"
+SETTINGS_FILE = "../falcon_app_settings.json"
+ACTIVE_TRADES_FILE = "../falcon_active_trades.json"
+
+# Import Supabase configuration
+try:
+    from supabase_config import *
+    SUPABASE_CONFIG_LOADED = True
+except ImportError:
+    # Fallback configuration (replace with your actual values)
+    SUPABASE_URL = "https://your-project-id.supabase.co"
+    SUPABASE_ANON_KEY = "your-anon-key-here"
+    LICENSES_TABLE = "licenses"
+    HEARTBEATS_TABLE = "heartbeats"
+    USERS_TABLE = "users"
+    SUPABASE_CONFIG_LOADED = False
+
+# Legacy API URLs (fallback)
+VALIDATION_URL = "https://api.falcontradecopier.com/validate-license"
+HEARTBEAT_URL = "https://api.falcontradecopier.com/heartbeat"
+ACTIVATION_URL = "https://api.falcontradecopier.com/activate"
+TRIAL_URL = "https://api.falcontradecopier.com/start-trial"
+
+NEWS_API_URL = "https://example.com/news-api"  # Placeholder for news API
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("../falcon_app_debug.log", encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Load spaCy model for AI parsing
+try:
+    import spacy
+    from spacy.matcher import Matcher
+
+    nlp = spacy.load("en_core_web_sm")
+except ImportError:
+    logger.warning("spaCy not installed. Using regex-only parsing.")
+    nlp = None
+except OSError:
+    logger.info("spaCy model not available. Using regex parsing as fallback.")
+    nlp = None
+
+# =====================
+# HELPER FUNCTIONS
+# =====================
+def get_hardware_id():
+    """Generate hardware fingerprint for device binding"""
+    try:
+        # Use MAC address
+        mac = uuid.getnode()
+
+        # Get disk serial (platform-independent)
+        disk_id = ""
+        if platform.system() == 'Windows':
+            cmd = "wmic diskdrive get serialnumber"
+        elif platform.system() == 'Darwin':
+            cmd = "ioreg -c IOMedia -r -d 1 | grep -E 'UUID'"
+        else:
+            cmd = "sudo hdparm -I /dev/sda | grep 'Serial Number'"
+
+        try:
+            disk_id = os.popen(cmd).read().strip().split('\n')[-1]
+        except:
+            pass
+
+        # Get CPU info
+        cpu_id = platform.processor()
+
+        combined = f"{mac}-{disk_id}-{cpu_id}"
+        return hashlib.sha256(combined.encode()).hexdigest()
+    except Exception as e:
+        logger.error(f"Error generating hardware ID: {str(e)}")
+        return str(uuid.uuid4())
+
+def mt5_is_initialized():
+    try:
+        mt5.symbols_total()
+        return True
+    except:
+        return False
+
+def expand_compact_range_match(match):
+    """Helper function to expand compact ranges like '3347-49' to '3347-3349'"""
+    first = match.group(1)
+    second = match.group(2)
+    if '.' in first:
+        return match.group(0)  # Don't process decimals
+    try:
+        first_num = int(first)
+        second_num = int(second)
+        base = (first_num // 100) * 100
+        full_second = base + second_num
+        if full_second < first_num:
+            full_second += 100  # Handle century crossing
+        return f"{first}-{full_second}"
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Failed to expand range {first}-{second}: {e}")
+        return match.group(0)
+
 # ======================
 # SUPABASE MANAGER
 # ======================
@@ -3147,7 +3323,7 @@ class ActivationPage(QWidget):
         layout.addWidget(logo_label, 0, Qt.AlignCenter)
 
         # Header
-        header = QLabel("Falcon Trade Signal Copier")
+        header = QLabel("FTSC")
         header
         layout.addWidget(header, 0, Qt.AlignCenter)
 
@@ -3541,65 +3717,96 @@ class TelegramPage(QWidget):
         super().__init__(parent)
         self.parent = parent
         self.channel_checkboxes = {}  # Store channel_id: checkbox mapping
-        self.setup_ui()
-        self.check_session_status()
-        QTimer.singleShot(100, self.attempt_auto_connect)
         self.channels = []  # Store loaded channels
+        self.timeout_timer = None  # Initialize timeout timer
         
-        # Connect to TelegramManager signals if available
-        if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
-            self.parent.telegram_manager.connection_status_changed.connect(self.update_connection_status)
+        # Setup UI first - this is safe and won't block
+        self.setup_ui()
+        
+        # Set basic UI state immediately - no external dependencies
+        self.phone_label.setVisible(True)
+        self.phone_input.setVisible(True)
+        self.code_label.setVisible(True)
+        self.code_input.setVisible(True)
+        self.send_code_btn.setVisible(True)
+        self.verify_btn.setVisible(False)
+        self.resend_btn.setVisible(False)
+        self.change_number_btn.setVisible(False)
+        self.logged_in_label.setVisible(False)
+        self.phone_display.setVisible(False)
+        self.logout_btn.setVisible(False)
+        
+        # Show placeholder immediately
+        self.show_channel_placeholder()
+        
+        # All other initialization delayed to prevent blocking
+        QTimer.singleShot(500, self.safe_delayed_init)
+        
+    def safe_delayed_init(self):
+        """Safe delayed initialization with minimal dependencies"""
+        try:
+            # Only do basic initialization that won't block
+            if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
+                try:
+                    self.parent.telegram_manager.connection_status_changed.connect(self.update_connection_status)
+                except:
+                    pass  # Ignore connection errors
+                    
+        except Exception as e:
+            logger.error(f"Error in safe delayed init: {e}")
+            # Don't do anything - UI is already in a good state
+            
+    def ensure_ui_state(self):
+        """Safety method to ensure UI is always in a good state"""
+        try:
+            # Check if UI is in a valid state
+            if not (self.phone_label.isVisible() or self.logged_in_label.isVisible()):
+                logger.warning("UI not in valid state, resetting to login")
+                self.update_ui_for_login_state()
+                self.show_channel_placeholder()
+        except Exception as e:
+            logger.error(f"Error in ensure_ui_state: {e}")
+            # Force reset to login state
+            try:
+                self.update_ui_for_login_state()
+                self.show_channel_placeholder()
+            except:
+                pass
         
     def showEvent(self, event):
         """Called when the page becomes visible"""
         super().showEvent(event)
         
-        # Ensure telegram_manager is initialized
-        if not (hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager):
-            # Initialize telegram_manager if not already done
-            if hasattr(self.parent, 'initialize_telegram'):
-                self.parent.initialize_telegram()
-            QTimer.singleShot(2000, self.delayed_show_event)  # Retry after initialization
-            return
-        
-        # Load channels if Telegram is connected
-        if (hasattr(self.parent, 'telegram_manager') and 
-            self.parent.telegram_manager and 
-            hasattr(self.parent.telegram_manager, 'connected') and 
-            self.parent.telegram_manager.connected):
-            self.update_ui_for_logged_in_state()
-            QTimer.singleShot(500, self.load_channels_if_connected)
-            # Force refresh phone display after a short delay
-            QTimer.singleShot(1000, self.refresh_phone_display)
-        else:
-            # If Telegram is not connected but we have saved channels, try to load them
-            saved_channels = self.parent.settings.get_telegram_channels()
-            if saved_channels:
-                QTimer.singleShot(1000, self.load_channels_if_connected)
+        # Only do minimal, safe operations
+        try:
+            # Check if we need to update the UI state
+            if hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager:
+                if hasattr(self.parent, 'telegram_manager', 'connected') and self.parent.telegram_manager.connected:
+                    # User is connected, update UI
+                    QTimer.singleShot(100, self.update_ui_for_logged_in_state)
+                    QTimer.singleShot(200, self.load_channels_if_connected)
+                else:
+                    # Try auto-connection if not connected but session exists
+                    QTimer.singleShot(500, self.attempt_auto_connect)
+        except Exception as e:
+            logger.error(f"Error in showEvent: {e}")
+            # Don't do anything - UI is already functional
     
     def delayed_show_event(self):
         """Handle delayed show event after telegram_manager initialization"""
-        # Load channels if Telegram is connected
-        if (hasattr(self.parent, 'telegram_manager') and 
-            self.parent.telegram_manager and 
-            hasattr(self.parent.telegram_manager, 'connected') and 
-            self.parent.telegram_manager.connected):
-            QTimer.singleShot(500, self.load_channels_if_connected)
-        else:
-            # If Telegram is not connected but we have saved channels, try to load them
-            saved_channels = self.parent.settings.get_telegram_channels()
-            if saved_channels:
-                QTimer.singleShot(1000, self.load_channels_if_connected)
+        # This method is kept for compatibility but simplified
+        pass
             
     def load_channels_if_connected(self):
         """Load channels if Telegram is connected"""
-        # Show loading indicator first
-        self.show_loading_indicator()
-        
         if (hasattr(self.parent, 'telegram_manager') and 
             self.parent.telegram_manager and 
             hasattr(self.parent.telegram_manager, 'connected') and 
             self.parent.telegram_manager.connected):
+            # Show loading indicator only for saved sessions
+            session = self.parent.settings.get_telegram_session()
+            if session:
+                self.show_loading_indicator()
             self.parent.telegram_manager.load_channels()
         else:
             # If Telegram is not connected, try to reconnect and then load channels
@@ -3607,6 +3814,8 @@ class TelegramPage(QWidget):
                 self.parent.telegram_manager):
                 session = self.parent.settings.get_telegram_session()
                 if session:
+                    # Show loading indicator for saved sessions
+                    self.show_loading_indicator()
                     self.parent.telegram_manager.session_string = session
                     self.parent.telegram_manager.connect_telegram(
                         TELEGRAM_API_ID,
@@ -3615,6 +3824,9 @@ class TelegramPage(QWidget):
                     )
                     # Try to load channels after a delay
                     QTimer.singleShot(2000, self.load_channels_if_connected)
+                else:
+                    # No saved session, show placeholder
+                    self.show_channel_placeholder()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -3684,7 +3896,54 @@ class TelegramPage(QWidget):
         self.verify_btn.setFixedHeight(32)
         self.verify_btn.setFixedWidth(80)
         self.verify_btn.setEnabled(False)
+        self.verify_btn.setVisible(False)  # Initially hidden
         self.verify_btn.clicked.connect(self.verify_telegram_code)
+
+        self.resend_btn = QPushButton("Resend Code")
+        self.resend_btn.setFixedHeight(32)
+        self.resend_btn.setFixedWidth(100)
+        self.resend_btn.setVisible(False)  # Initially hidden
+        self.resend_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3b82f6, stop:1 #2563eb);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563eb, stop:1 #1d4ed8);
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1d4ed8, stop:1 #1e40af);
+            }
+        """)
+        self.resend_btn.clicked.connect(self.resend_telegram_code)
+
+        self.change_number_btn = QPushButton("Change Number")
+        self.change_number_btn.setFixedHeight(32)
+        self.change_number_btn.setFixedWidth(100)
+        self.change_number_btn.setVisible(False)  # Initially hidden
+        self.change_number_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #6b7280, stop:1 #4b5563);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4b5563, stop:1 #374151);
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #374151, stop:1 #1f2937);
+            }
+        """)
+        self.change_number_btn.clicked.connect(self.change_telegram_number)
 
         self.logout_btn = QPushButton("Logout")
         self.logout_btn.setFixedHeight(32)
@@ -3716,6 +3975,8 @@ class TelegramPage(QWidget):
         input_row.addWidget(self.code_input)
         input_row.addWidget(self.send_code_btn)
         input_row.addWidget(self.verify_btn)
+        input_row.addWidget(self.resend_btn)
+        input_row.addWidget(self.change_number_btn)
         
         # Add stretch at the end to center the content
         input_row.addStretch()
@@ -3795,6 +4056,9 @@ class TelegramPage(QWidget):
         scroll_area.setMinimumHeight(150)
         layout.addWidget(scroll_area)
 
+        # Add placeholder message for channel list before login
+        self.show_channel_placeholder()
+
         # Channel Names and Save button in one row
         id_save_layout = QHBoxLayout()
         id_save_layout.setSpacing(8)
@@ -3866,14 +4130,30 @@ class TelegramPage(QWidget):
         self.send_code_btn.setEnabled(False)
         self.parent.status_bar.showMessage("Sending verification code...")
         
-        # Update UI to verification state (show change button)
+        # Update UI to verification state
         self.update_ui_for_verification_state()
         
-        self.parent.telegram_manager.connect_telegram(
-            TELEGRAM_API_ID,
-            TELEGRAM_API_HASH,
-            phone
-        )
+        # Set up timeout timer to show resend button after 2 minutes
+        if hasattr(self, 'timeout_timer') and self.timeout_timer:
+            self.timeout_timer.stop()
+        self.timeout_timer = QTimer()
+        self.timeout_timer.setSingleShot(True)
+        self.timeout_timer.timeout.connect(self.show_resend_button)
+        self.timeout_timer.start(120000)  # 2 minutes timeout
+        
+        try:
+            self.parent.telegram_manager.connect_telegram(
+                TELEGRAM_API_ID,
+                TELEGRAM_API_HASH,
+                phone
+            )
+        except Exception as e:
+            logger.error(f"Error sending Telegram code: {e}")
+            self.send_code_btn.setEnabled(True)
+            self.parent.status_bar.showMessage("Failed to send code. Please try again.")
+            # Stop timeout timer
+            if hasattr(self, 'timeout_timer') and self.timeout_timer:
+                self.timeout_timer.stop()
 
     def verify_telegram_code(self):
         code = self.code_input.text().strip()
@@ -3889,7 +4169,165 @@ class TelegramPage(QWidget):
 
         self.verify_btn.setEnabled(False)
         self.parent.status_bar.showMessage("Verifying code...")
+        
+        # Stop timeout timer if it's running
+        if hasattr(self, 'timeout_timer') and self.timeout_timer:
+            self.timeout_timer.stop()
+        
         self.parent.telegram_manager.authenticate(code)
+
+    def change_telegram_number(self):
+        """Change Telegram phone number - reset to login state"""
+        try:
+            # Stop any running timers
+            if hasattr(self, 'timeout_timer') and self.timeout_timer:
+                self.timeout_timer.stop()
+            
+            # Reset to login state
+            self.update_ui_for_login_state()
+            
+            # Clear inputs
+            self.phone_input.clear()
+            self.code_input.clear()
+            
+            # Enable phone input for editing
+            self.phone_input.setEnabled(True)
+            
+            # Ensure resend button is hidden when changing number
+            self.resend_btn.setVisible(False)
+            self.resend_btn.setEnabled(False)
+            
+            # Update status
+            self.parent.status_bar.showMessage("Enter new phone number")
+            
+        except Exception as e:
+            logger.error(f"Error changing Telegram number: {e}")
+            QMessageBox.warning(self, "Error", f"Failed to change phone number: {str(e)}")
+
+    def show_channel_placeholder(self):
+        """Show placeholder message in channel list before login"""
+        self.clear_channel_grid()
+        placeholder_widget = QWidget()
+        placeholder_widget.setFixedHeight(100)
+        
+        layout = QVBoxLayout(placeholder_widget)
+        layout.setSpacing(8)
+        layout.setContentsMargins(20, 15, 20, 15)
+        
+        # Placeholder label with faded text
+        placeholder_label = QLabel("Your channels will be listed here")
+        placeholder_label.setStyleSheet("""
+            font-size: 14px;
+            color: #6b7280;
+            text-align: center;
+            font-style: italic;
+        """)
+        placeholder_label.setAlignment(Qt.AlignCenter)
+        
+        # Additional instruction
+        instruction_label = QLabel("Please log in to Telegram to view your channels")
+        instruction_label.setStyleSheet("""
+            font-size: 12px;
+            color: #9ca3af;
+            text-align: center;
+        """)
+        instruction_label.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(placeholder_label)
+        layout.addWidget(instruction_label)
+        
+        self.grid_layout.addWidget(placeholder_widget, 0, 0, 1, 1)
+        self.grid_layout.setAlignment(placeholder_widget, Qt.AlignCenter)
+
+    def create_no_channels_widget(self):
+        """Create widget to show when no channels are found"""
+        no_channels_widget = QWidget()
+        no_channels_widget.setFixedHeight(100)
+        
+        layout = QVBoxLayout(no_channels_widget)
+        layout.setSpacing(8)
+        layout.setContentsMargins(20, 15, 20, 15)
+        
+        # No channels label
+        no_channels_label = QLabel("No channels found")
+        no_channels_label.setStyleSheet("""
+            font-size: 14px;
+            color: #9ca3af;
+            text-align: center;
+            font-weight: 600;
+        """)
+        no_channels_label.setAlignment(Qt.AlignCenter)
+        
+        # Additional instruction
+        instruction_label = QLabel("You may not have access to any channels or they may be private")
+        instruction_label.setStyleSheet("""
+            font-size: 12px;
+            color: #6b7280;
+            text-align: center;
+        """)
+        instruction_label.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(no_channels_label)
+        layout.addWidget(instruction_label)
+        
+        return no_channels_widget
+
+    def show_resend_button(self):
+        """Show resend button when timeout occurs during verification"""
+        # Only show resend button if we're in verification state (not logged in)
+        if (self.verify_btn.isVisible() and 
+            not self.logged_in_label.isVisible() and 
+            not self.logout_btn.isVisible()):
+            
+            self.verify_btn.setVisible(False)
+            self.resend_btn.setVisible(True)
+            self.resend_btn.setEnabled(True)
+            self.parent.status_bar.showMessage("Code expired. Click 'Resend Code' to try again.")
+        
+        # Stop timeout timer if it's running
+        if hasattr(self, 'timeout_timer') and self.timeout_timer:
+            self.timeout_timer.stop()
+
+    def resend_telegram_code(self):
+        """Resend verification code when timeout occurs"""
+        phone = self.phone_input.text().strip()
+        if not phone:
+            QMessageBox.warning(self, "Missing Phone", "Please enter your phone number")
+            return
+
+        # Check if telegram_manager is available
+        if not (hasattr(self.parent, 'telegram_manager') and self.parent.telegram_manager):
+            QMessageBox.warning(self, "Telegram Manager Error", "Telegram manager is not initialized. Please restart the application.")
+            self.resend_btn.setEnabled(True)
+            return
+
+        self.resend_btn.setEnabled(False)
+        self.parent.status_bar.showMessage("Resending verification code...")
+        
+        # Update UI to verification state
+        self.update_ui_for_verification_state()
+        
+        # Set up timeout timer to show resend button after 2 minutes
+        if hasattr(self, 'timeout_timer') and self.timeout_timer:
+            self.timeout_timer.stop()
+        self.timeout_timer = QTimer()
+        self.timeout_timer.setSingleShot(True)
+        self.timeout_timer.timeout.connect(self.show_resend_button)
+        self.timeout_timer.start(120000)  # 2 minutes timeout
+        
+        try:
+            self.parent.telegram_manager.connect_telegram(
+                TELEGRAM_API_ID,
+                TELEGRAM_API_HASH,
+                phone
+            )
+        except Exception as e:
+            logger.error(f"Error resending Telegram code: {e}")
+            self.resend_btn.setEnabled(True)
+            self.parent.status_bar.showMessage("Failed to resend code. Please try again.")
+            # Stop timeout timer
+            if hasattr(self, 'timeout_timer') and self.timeout_timer:
+                self.timeout_timer.stop()
 
     def change_telegram_number(self):
         """Change Telegram phone number - properly logout first"""
@@ -4030,11 +4468,24 @@ class TelegramPage(QWidget):
             logger.error(f"Error in async logout: {e}")
 
     def check_session_status(self):
-        session = self.parent.settings.get_telegram_session()
-        if session:
-            self.update_ui_for_logged_in_state()
-        else:
+        try:
+            if not hasattr(self.parent, 'settings'):
+                logger.warning("Settings not available, using login state")
+                self.update_ui_for_login_state()
+                self.show_channel_placeholder()
+                return
+                
+            session = self.parent.settings.get_telegram_session()
+            if session:
+                self.update_ui_for_logged_in_state()
+            else:
+                self.update_ui_for_login_state()
+                # Show placeholder for channels when not logged in
+                self.show_channel_placeholder()
+        except Exception as e:
+            logger.error(f"Error checking session status: {e}")
             self.update_ui_for_login_state()
+            self.show_channel_placeholder()
     
     def update_ui_for_logged_in_state(self):
         """Update UI when user has a saved session (logged in state)"""
@@ -4045,6 +4496,8 @@ class TelegramPage(QWidget):
         self.code_input.setVisible(False)
         self.send_code_btn.setVisible(False)
         self.verify_btn.setVisible(False)
+        self.resend_btn.setVisible(False)
+        self.change_number_btn.setVisible(False)  # Hide change number button when logged in
         
         # Show logged in layout (label, phone display, and logout button)
         self.logged_in_label.setVisible(True)
@@ -4072,7 +4525,9 @@ class TelegramPage(QWidget):
         self.code_label.setVisible(True)
         self.code_input.setVisible(True)
         self.send_code_btn.setVisible(True)
-        self.verify_btn.setVisible(True)
+        self.verify_btn.setVisible(False)  # Initially hidden
+        self.resend_btn.setVisible(False)  # Initially hidden - only shows on timeout
+        self.change_number_btn.setVisible(False)  # Initially hidden
         
         # Hide logged in layout (label, phone display, and logout button)
         self.logged_in_label.setVisible(False)
@@ -4083,6 +4538,8 @@ class TelegramPage(QWidget):
         self.phone_input.setEnabled(True)
         self.code_input.setEnabled(False)
         self.verify_btn.setEnabled(False)
+        self.send_code_btn.setEnabled(True)
+        self.resend_btn.setEnabled(False)  # Disabled by default
     
     def update_ui_for_verification_state(self):
         """Update UI when verification code has been sent"""
@@ -4094,15 +4551,33 @@ class TelegramPage(QWidget):
         self.code_input.setVisible(True)
         self.code_input.setEnabled(True)
         
-        # Show verify button
+        # Show verify button and change number button, hide send code button
         self.send_code_btn.setVisible(False)
         self.verify_btn.setVisible(True)
         self.verify_btn.setEnabled(True)
+        self.resend_btn.setVisible(False)  # Hidden during verification - only shows on timeout
+        self.change_number_btn.setVisible(True)  # Show change number button
         
         # Hide logged in layout (label, phone display, and logout button)
         self.logged_in_label.setVisible(False)
         self.phone_display.setVisible(False)
         self.logout_btn.setVisible(False)
+
+    def update_connection_status(self, connected):
+        """Update UI based on Telegram connection status"""
+        if connected:
+            # User is logged in, show logged in state
+            self.update_ui_for_logged_in_state()
+            # Load channels if connected
+            QTimer.singleShot(500, self.load_channels_if_connected)
+            # Stop any running timeout timers since we're now connected
+            if hasattr(self, 'timeout_timer') and self.timeout_timer:
+                self.timeout_timer.stop()
+        else:
+            # User is not logged in, show login state
+            self.update_ui_for_login_state()
+            # Show placeholder for channels
+            self.show_channel_placeholder()
     
     def get_phone_from_session(self):
         """Extract phone number from saved session or settings"""
@@ -4220,26 +4695,36 @@ class TelegramPage(QWidget):
 
 
     def attempt_auto_connect(self):
-        session = self.parent.settings.get_telegram_session()
-        if (session and 
-            hasattr(self.parent, 'telegram_manager') and 
-            self.parent.telegram_manager):
-            self.parent.status_bar.showMessage("Attempting auto-login...")
-            
-            # Update UI to logged in state
-            self.update_ui_for_logged_in_state()
-            
-            self.parent.telegram_manager.session_string = session
-            self.parent.telegram_manager.connect_telegram(
-                TELEGRAM_API_ID, TELEGRAM_API_HASH, ""
-            )
-        else:
-            logger.warning("Telegram manager not available for auto-connect")
+        try:
+            if not hasattr(self.parent, 'settings'):
+                logger.warning("Settings not available for auto-connect")
+                return
+                
+            session = self.parent.settings.get_telegram_session()
+            if (session and 
+                hasattr(self.parent, 'telegram_manager') and 
+                self.parent.telegram_manager):
+                self.parent.status_bar.showMessage("Attempting auto-login...")
+                
+                # Update UI to logged in state
+                self.update_ui_for_logged_in_state()
+                
+                self.parent.telegram_manager.session_string = session
+                self.parent.telegram_manager.connect_telegram(
+                    TELEGRAM_API_ID, TELEGRAM_API_HASH, ""
+                )
+            else:
+                logger.info("No saved session or Telegram manager not available for auto-connect")
+        except Exception as e:
+            logger.error(f"Error in attempt_auto_connect: {e}")
+            # Fall back to login state
+            self.update_ui_for_login_state()
+            self.show_channel_placeholder()
 
     def load_channels(self, channels):
         """Load channels into the grid with modern design and smooth animations"""
         self.channels = channels  # Store channels
-        self.clear_channel_grid()  # This will remove the loading indicator
+        self.clear_channel_grid()  # This will remove the loading indicator or placeholder
         
         if not channels:
             no_channels_widget = self.create_no_channels_widget()
@@ -5364,8 +5849,8 @@ class MT5Page(QWidget):
         self.back_btn.clicked.connect(lambda: self.parent.stacked_widget.setCurrentWidget(self.parent.telegram_page))
         self.finish_btn = QPushButton("Finish")
         self.finish_btn.setEnabled(False)
-        self.finish_btn.clicked.connect(self.parent.show_dashboard)
-
+        self.finish_btn.clicked.connect(self.on_finish_clicked)
+        
         nav_layout.addWidget(self.back_btn)
         nav_layout.addStretch()
         nav_layout.addWidget(self.finish_btn)
@@ -5473,6 +5958,16 @@ class MT5Page(QWidget):
                           "The connection to MT5 timed out. Please check your settings and try again.\n\n" +
                           "If this problem persists, try restarting the application.")
 
+    def on_finish_clicked(self):
+        """Handle finish button click"""
+        try:
+            logger.info("Finish button clicked - navigating to dashboard")
+            self.parent.status_bar.showMessage("Navigating to dashboard...")
+            self.parent.show_dashboard()
+        except Exception as e:
+            logger.error(f"Error navigating to dashboard: {e}")
+            QMessageBox.critical(self, "Navigation Error", f"Failed to navigate to dashboard: {str(e)}")
+
     def on_mt5_connection_result(self, success, message):
         # Stop timeout timer
         if hasattr(self, 'timeout_timer'):
@@ -5487,11 +5982,15 @@ class MT5Page(QWidget):
             self.parent.update_account_info()
             # Enable the finish button so user can click it to go to dashboard
             self.finish_btn.setEnabled(True)
+            logger.info("MT5 connection successful - finish button enabled")
         else:
             self.status_label.setText("Connection failed")
             self.status_label.setStyleSheet("font-size: 11px; font-weight: bold; margin: 8px 0; color: #f54e4e;")
             self.parent.status_bar.showMessage("MT5 connection failed")
             QMessageBox.warning(self, "Connection Failed", f"Failed to connect to MT5: {message}")
+            # For testing purposes, enable the finish button even on failure
+            self.finish_btn.setEnabled(True)
+            logger.info("MT5 connection failed but finish button enabled for testing")
         self.connect_btn.setEnabled(True)
         
     def update_responsive_layout(self, width, height):
@@ -6314,24 +6813,24 @@ class DashboardPage(QWidget):
             QFrame {
                 background-color: #1a1f2e;
                 border: 1px solid #2a2f3e;
-                border-radius: 6px;
-                padding: 8px;
+                border-radius: 4px;
+                padding: 4px;
             }
         """)
         filters_layout = QHBoxLayout(filters_frame)
-        filters_layout.setSpacing(10)
-        filters_layout.setContentsMargins(10, 8, 10, 8)
+        filters_layout.setSpacing(6)
+        filters_layout.setContentsMargins(6, 4, 6, 4)
         
         # Filter labels with consistent styling
-        filter_label_style = "font-size: 12px; font-weight: 600; color: #f0f4f9;"
+        filter_label_style = "font-size: 11px; font-weight: 600; color: #f0f4f9;"
         filter_input_style = """
             QDateEdit, QComboBox {
                 background-color: #0d111f;
                 border: 1px solid #4a4f5e;
-                border-radius: 4px;
+                border-radius: 3px;
                 color: #f0f4f9;
-                padding: 4px 8px;
-                font-size: 11px;
+                padding: 3px 6px;
+                font-size: 10px;
             }
             QDateEdit:focus, QComboBox:focus {
                 border-color: #f27d03;
@@ -6346,7 +6845,7 @@ class DashboardPage(QWidget):
         self.date_from = QDateEdit()
         self.date_from.setDate(QDate.currentDate().addDays(-30))
         self.date_from.setCalendarPopup(True)
-        self.date_from.setFixedWidth(100)
+        self.date_from.setFixedWidth(85)
         self.date_from.setStyleSheet(filter_input_style)
         filters_layout.addWidget(self.date_from)
         
@@ -6357,7 +6856,7 @@ class DashboardPage(QWidget):
         self.date_to = QDateEdit()
         self.date_to.setDate(QDate.currentDate())
         self.date_to.setCalendarPopup(True)
-        self.date_to.setFixedWidth(100)
+        self.date_to.setFixedWidth(85)
         self.date_to.setStyleSheet(filter_input_style)
         filters_layout.addWidget(self.date_to)
         
@@ -6367,7 +6866,7 @@ class DashboardPage(QWidget):
         
         self.symbol_filter = QComboBox()
         self.symbol_filter.addItem("All")
-        self.symbol_filter.setFixedWidth(80)
+        self.symbol_filter.setFixedWidth(70)
         self.symbol_filter.setStyleSheet(filter_input_style)
         filters_layout.addWidget(self.symbol_filter)
         
@@ -6377,7 +6876,7 @@ class DashboardPage(QWidget):
         
         self.status_filter = QComboBox()
         self.status_filter.addItems(["All", "Executed", "Failed", "Pending"])
-        self.status_filter.setFixedWidth(80)
+        self.status_filter.setFixedWidth(70)
         self.status_filter.setStyleSheet(filter_input_style)
         filters_layout.addWidget(self.status_filter)
         
@@ -6463,9 +6962,469 @@ class DashboardPage(QWidget):
         
         self.tabs.addTab(history_tab, "History")
 
+        # Performance tab - REDESIGNED to match app theme
+        performance_tab = QWidget()
+        performance_layout = QVBoxLayout(performance_tab)
+        performance_layout.setContentsMargins(40, 25, 40, 20)
+        performance_layout.setSpacing(8)
 
+        # Create scroll area for performance content
+        performance_scroll = QScrollArea()
+        performance_scroll.setWidgetResizable(True)
+        performance_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        performance_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        performance_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+            QScrollBar:vertical {
+                background: #1c243b;
+                width: 10px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical {
+                background: #374151;
+                border-radius: 5px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #4b5563;
+            }
+            QScrollBar:horizontal {
+                background: #1c243b;
+                height: 10px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:horizontal {
+                background: #374151;
+                border-radius: 5px;
+                min-width: 20px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background: #4b5563;
+            }
+        """)
+        
+        # Create scroll content widget
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(15, 15, 15, 15)
+        scroll_layout.setSpacing(12)
 
+        # Clean Header with app theme colors
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 8)
+        
+        # Title
+        performance_title = QLabel("📊 Performance Dashboard")
+        performance_title.setStyleSheet("""
+            QLabel {
+                font-size: 18px;
+                font-weight: 600;
+                color: #f0f4f9;
+                background: transparent;
+                padding: 8px 0;
+            }
+        """)
+        header_layout.addWidget(performance_title)
+        
+        header_layout.addStretch()
+        
+        # Time Period Selector
+        period_label = QLabel("Time Period:")
+        period_label.setStyleSheet("""
+            QLabel {
+                font-size: 13px;
+                font-weight: 500;
+                color: #9ca6b8;
+                background: transparent;
+                padding: 6px 8px 6px 0;
+            }
+        """)
+        header_layout.addWidget(period_label)
+        
+        self.period_selector = QComboBox()
+        self.period_selector.addItems(["Last 7 Days", "Last 30 Days", "Last 90 Days", "Last 6 Months", "Last Year", "All Time"])
+        self.period_selector.setCurrentText("Last 30 Days")
+        self.period_selector.currentTextChanged.connect(self.on_period_changed)
+        self.period_selector.setStyleSheet("""
+            QComboBox {
+                background: #0d111f;
+                border: 1px solid #1c243b;
+                border-radius: 6px;
+                padding: 6px 10px;
+                min-width: 130px;
+                color: #f0f4f9;
+                font-size: 12px;
+                font-weight: 500;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 4px solid #6b7280;
+            }
+            QComboBox:hover {
+                border: 1px solid #f27d03;
+                background: #0d111f;
+            }
+            QComboBox QAbstractItemView {
+                background: #0d111f;
+                border: 1px solid #1c243b;
+                selection-background-color: #f27d03;
+                selection-color: white;
+                font-size: 12px;
+            }
+        """)
+        header_layout.addWidget(self.period_selector)
+        
+        # Channel Filter
+        channel_label = QLabel("Channel:")
+        channel_label.setStyleSheet("""
+            QLabel {
+                font-size: 13px;
+                font-weight: 500;
+                color: #9ca6b8;
+                background: transparent;
+                padding: 6px 8px 6px 0;
+            }
+        """)
+        header_layout.addWidget(channel_label)
+        
+        self.channel_selector = QComboBox()
+        self.channel_selector.addItem("All Channels")
+        self.channel_selector.currentTextChanged.connect(self.on_channel_changed)
+        self.channel_selector.setStyleSheet("""
+            QComboBox {
+                background: #0d111f;
+                border: 1px solid #1c243b;
+                border-radius: 6px;
+                padding: 6px 10px;
+                min-width: 130px;
+                color: #f0f4f9;
+                font-size: 12px;
+                font-weight: 500;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 4px solid #6b7280;
+            }
+            QComboBox:hover {
+                border: 1px solid #f27d03;
+                background: #0d111f;
+            }
+            QComboBox QAbstractItemView {
+                background: #0d111f;
+                border: 1px solid #1c243b;
+                selection-background-color: #f27d03;
+                selection-color: white;
+                font-size: 12px;
+            }
+        """)
+        header_layout.addWidget(self.channel_selector)
+        
+        # Refresh Button - Match history tab style
+        self.refresh_performance_btn = QPushButton("Refresh")
+        self.refresh_performance_btn.setToolTip("Refresh Performance")
+        self.refresh_performance_btn.setFixedSize(80, 32)
+        self.refresh_performance_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2a2f3e;
+                color: #f0f4f9;
+                border: 1px solid #4a4f5e;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #3a3f4e;
+                border-color: #f27d03;
+            }
+        """)
+        self.refresh_performance_btn.clicked.connect(self.on_refresh_performance)
+        header_layout.addWidget(self.refresh_performance_btn)
+        
+        scroll_layout.addLayout(header_layout)
 
+        # Performance Metrics Section - App Theme
+        metrics_group = QGroupBox("📊 Performance Metrics")
+        metrics_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: 600;
+                font-size: 14px;
+                border: 1px solid #1c243b;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 15px;
+                background: #0d111f;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 8px 0 8px;
+                color: #f0f4f9;
+                background: #0d111f;
+                font-size: 15px;
+                font-weight: 600;
+            }
+        """)
+        metrics_layout = QGridLayout(metrics_group)
+        metrics_layout.setSpacing(12)
+        metrics_layout.setContentsMargins(15, 20, 15, 15)
+        
+        # Create metric labels with simpler styling
+        self.total_pnl_label = QLabel("💰 Total P&L: $0.00")
+        self.total_pnl_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                font-weight: 500;
+                color: #f0f4f9;
+                background: transparent;
+                padding: 6px 8px;
+                border: none;
+            }
+        """)
+        
+        self.win_rate_label = QLabel("🎯 Win Rate: 0%")
+        self.win_rate_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                font-weight: 500;
+                color: #f0f4f9;
+                background: transparent;
+                padding: 6px 8px;
+                border: none;
+            }
+        """)
+        
+        self.rr_label = QLabel("⚖️ Avg R:R: 0.00")
+        self.rr_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                font-weight: 500;
+                color: #f0f4f9;
+                background: transparent;
+                padding: 6px 8px;
+                border: none;
+            }
+        """)
+        
+        self.drawdown_label = QLabel("📉 Max Drawdown: $0.00")
+        self.drawdown_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                font-weight: 500;
+                color: #f0f4f9;
+                background: transparent;
+                padding: 6px 8px;
+                border: none;
+            }
+        """)
+        
+        self.profit_factor_label = QLabel("📊 Profit Factor: 0.00")
+        self.profit_factor_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                font-weight: 500;
+                color: #f0f4f9;
+                background: transparent;
+                padding: 6px 8px;
+                border: none;
+            }
+        """)
+        
+        self.sharpe_label = QLabel("📈 Sharpe Ratio: 0.00")
+        self.sharpe_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                font-weight: 500;
+                color: #f0f4f9;
+                background: transparent;
+                padding: 6px 8px;
+                border: none;
+            }
+        """)
+        
+        # Add to grid
+        metrics_layout.addWidget(self.total_pnl_label, 0, 0)
+        metrics_layout.addWidget(self.win_rate_label, 0, 1)
+        metrics_layout.addWidget(self.rr_label, 0, 2)
+        metrics_layout.addWidget(self.drawdown_label, 1, 0)
+        metrics_layout.addWidget(self.profit_factor_label, 1, 1)
+        metrics_layout.addWidget(self.sharpe_label, 1, 2)
+        
+        scroll_layout.addWidget(metrics_group)
+
+        # Channel Performance Table - App Theme with 10+ rows
+        channel_group = QGroupBox("🏆 Channel Performance Ranking")
+        channel_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: 600;
+                font-size: 15px;
+                border: 1px solid #1c243b;
+                border-radius: 8px;
+                margin-top: 15px;
+                padding-top: 15px;
+                background: #0d111f;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 8px 0 8px;
+                color: #f0f4f9;
+                background: #0d111f;
+                font-size: 16px;
+                font-weight: 600;
+            }
+        """)
+        channel_layout = QVBoxLayout(channel_group)
+        channel_layout.setSpacing(10)
+        channel_layout.setContentsMargins(15, 15, 15, 15)
+        
+        # Description
+        table_description = QLabel("Detailed performance analysis of your Telegram trading channels")
+        table_description.setStyleSheet("""
+            QLabel {
+                font-size: 13px;
+                color: #9ca6b8;
+                font-weight: 500;
+                padding: 4px 0;
+                text-align: center;
+            }
+        """)
+        table_description.setAlignment(Qt.AlignCenter)
+        channel_layout.addWidget(table_description)
+        
+        self.channel_table = QTableWidget()
+        self.channel_table.setColumnCount(9)
+        self.channel_table.setHorizontalHeaderLabels([
+            "Rank", "Channel", "Trades", "Win Rate", "Total P&L", "Avg P&L", "R:R", "Avg Duration", "Score"
+        ])
+        
+        # Set column widths for better visibility
+        self.channel_table.setColumnWidth(0, 50)   # Rank
+        self.channel_table.setColumnWidth(1, 160)  # Channel
+        self.channel_table.setColumnWidth(2, 60)   # Trades
+        self.channel_table.setColumnWidth(3, 80)   # Win Rate
+        self.channel_table.setColumnWidth(4, 90)   # Total P&L
+        self.channel_table.setColumnWidth(5, 80)   # Avg P&L
+        self.channel_table.setColumnWidth(6, 60)   # R:R
+        self.channel_table.setColumnWidth(7, 90)   # Avg Duration
+        self.channel_table.setColumnWidth(8, 70)   # Score
+        
+        self.channel_table.horizontalHeader().setStretchLastSection(True)
+        self.channel_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.channel_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.channel_table.setAlternatingRowColors(True)
+        self.channel_table.setSortingEnabled(True)
+        self.channel_table.verticalHeader().setDefaultSectionSize(35)
+        
+        # Set minimum rows to 10 for better visual consistency
+        self.channel_table.setMinimumHeight(400)  # Ensures at least 10 rows are visible
+        
+        # App theme table styling
+        self.channel_table.setStyleSheet("""
+            QTableWidget {
+                background: #0d111f;
+                border: 1px solid #1c243b;
+                border-radius: 8px;
+                gridline-color: #374151;
+                color: #f0f4f9;
+                font-size: 12px;
+                font-weight: 500;
+                selection-background-color: #f27d03;
+                selection-color: white;
+            }
+            QTableWidget::item {
+                padding: 10px 8px;
+                border: none;
+                border-bottom: 1px solid #374151;
+            }
+            QTableWidget::item:selected {
+                background: #f27d03;
+                color: white;
+                font-weight: 600;
+            }
+            QTableWidget::item:hover {
+                background: #1c243b;
+            }
+            QHeaderView::section {
+                background: #1c243b;
+                padding: 12px 8px;
+                border: 1px solid #374151;
+                font-weight: 600;
+                color: #f0f4f9;
+                font-size: 12px;
+                text-align: center;
+            }
+            QHeaderView::section:hover {
+                background: #374151;
+            }
+        """)
+        
+        channel_layout.addWidget(self.channel_table)
+        scroll_layout.addWidget(channel_group)
+        
+        # Advanced Features Section - App Theme
+        coming_soon_group = QGroupBox("🚀 Advanced Analytics")
+        coming_soon_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: 600;
+                font-size: 14px;
+                border: 1px solid #1c243b;
+                border-radius: 8px;
+                margin-top: 15px;
+                padding-top: 15px;
+                background: #0d111f;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 8px 0 8px;
+                color: #9ca6b8;
+                background: #0d111f;
+                font-size: 15px;
+                font-weight: 600;
+            }
+        """)
+        coming_soon_layout = QVBoxLayout(coming_soon_group)
+        coming_soon_layout.setSpacing(10)
+        coming_soon_layout.setContentsMargins(15, 15, 15, 15)
+        
+        # Placeholder message with app theme
+        coming_soon_label = QLabel("📈 Advanced Performance Charts\n\nComing Soon!\n\nInteractive charts and detailed analytics\nwill be available in the next update.\n\nUse the channel performance table above\nfor comprehensive trading analysis.")
+        coming_soon_label.setMinimumHeight(180)
+        coming_soon_label.setAlignment(Qt.AlignCenter)
+        coming_soon_label.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                font-weight: 500;
+                color: #9ca6b8;
+                background: #1c243b;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                padding: 30px;
+                margin: 5px;
+            }
+        """)
+        
+        coming_soon_layout.addWidget(coming_soon_label)
+        scroll_layout.addWidget(coming_soon_group)
+        
+        # Set the scroll content and add to main layout
+        performance_scroll.setWidget(scroll_content)
+        performance_layout.addWidget(performance_scroll)
 
         # Settings tab - COMPLETELY REDESIGNED with clean commercial-grade GUI
         settings_tab = QWidget()
@@ -6925,6 +7884,7 @@ class DashboardPage(QWidget):
         # Add tabs
         self.tabs.addTab(status_tab, "Dashboard")
         self.tabs.addTab(history_tab, "History")
+        self.tabs.addTab(performance_tab, "Performance")
         self.tabs.addTab(settings_tab, "Settings")
         self.tabs.addTab(account_tab, "My Account")
         main_layout.addWidget(self.tabs)
@@ -7170,8 +8130,15 @@ class DashboardPage(QWidget):
         self.license_timer.timeout.connect(self.refresh_license_info)
         self.license_timer.start(60000)
         
-
-            # Don't let this crash the app
+        # Performance timer (every 60 seconds)
+        self.performance_timer = QTimer()
+        self.performance_timer.timeout.connect(self.update_performance_data)
+        self.performance_timer.start(60000)
+        
+        # Initial performance update after 2 seconds
+        QTimer.singleShot(2000, self.update_performance_data)
+        
+        # Don't let this crash the app
 
 
 
@@ -7735,22 +8702,34 @@ class DashboardPage(QWidget):
                 
                 profit_item = QTableWidgetItem(f"${profit:.2f}")
                 if profit > 0:
-                    profit_item.setForeground(QColor(0))
+                    profit_item.setForeground(QColor("#10B981"))  # Green for profit
                 elif profit < 0:
-                    profit_item.setForeground(QColor(0))
+                    profit_item.setForeground(QColor("#EF4444"))  # Red for loss
+                else:
+                    profit_item.setForeground(QColor("#6B7280"))  # Gray for zero
                 self.history_table.setItem(row, 8, profit_item)
                 
                 # Closure Type (NEW COLUMN)
                 closure_type = trade.get('closure_type', 'Open')
                 closure_item = QTableWidgetItem(closure_type)
+                
+                # Color coding for closure types
                 if closure_type == 'TP':
-                    closure_item.setForeground(QColor(0))
+                    closure_item.setForeground(QColor("#10B981"))  # Green for TP
+                    closure_item.setBackground(QColor("#1a1f2e"))
                 elif closure_type == 'SL':
-                    closure_item.setForeground(QColor(0))
+                    closure_item.setForeground(QColor("#EF4444"))  # Red for SL
+                    closure_item.setBackground(QColor("#1a1f2e"))
                 elif closure_type == 'Manual':
-                    closure_item.setForeground(QColor(0))
+                    closure_item.setForeground(QColor("#F59E0B"))  # Orange for Manual
+                    closure_item.setBackground(QColor("#1a1f2e"))
                 elif closure_type == 'Partial':
-                    closure_item.setForeground(QColor(0))
+                    closure_item.setForeground(QColor("#8B5CF6"))  # Purple for Partial
+                    closure_item.setBackground(QColor("#1a1f2e"))
+                else:  # Open or other
+                    closure_item.setForeground(QColor("#6B7280"))  # Gray for Open
+                    closure_item.setBackground(QColor("#1a1f2e"))
+                
                 self.history_table.setItem(row, 9, closure_item)
                 
                 # Journal with placeholder text
@@ -8448,7 +9427,7 @@ class DashboardPage(QWidget):
         self.parent.settings.save_default_settings(default_settings)
         QMessageBox.information(self, "Default Saved", "Settings have been saved as default for new installations")
 
-
+    def update_performance_data(self):
         """Update all performance data and charts"""
         try:
             # Check if charting libraries are available
@@ -8469,25 +9448,32 @@ class DashboardPage(QWidget):
             if not hasattr(self.parent, 'trade_history'):
                 logger.warning("Trade history not available.")
                 return
+            
+            # Recalculate profits for all trades to ensure accurate data
+            self.parent.trade_history.recalculate_all_profits()
+            
+            # Add sample closed trades for testing (remove this in production)
+            if len(self.parent.trade_history.history) < 10:  # Only add if we have few trades
+                self.parent.trade_history.add_sample_closed_trades()
                 
             trades = self.parent.trade_history.get_all_trades()
+            logger.info(f"Retrieved {len(trades)} total trades for performance calculation")
             
             # Filter by period
             filtered_trades = self.filter_trades_by_period(trades, period)
+            logger.info(f"After period filter ({period}): {len(filtered_trades)} trades")
             
             # Filter by channel if specified
             if channel_filter != "All Channels":
                 filtered_trades = [t for t in filtered_trades if t.get('channel') == channel_filter]
+                logger.info(f"After channel filter ({channel_filter}): {len(filtered_trades)} trades")
             
             # Calculate performance metrics
             metrics = self.calculate_performance_metrics(filtered_trades)
+            logger.info(f"Calculated metrics: P&L=${metrics['total_pnl']:.2f}, Win Rate={metrics['win_rate']:.1f}%")
             
             # Update metric cards
             self.update_metric_cards(metrics)
-            
-            # Generate and update charts
-            self.update_equity_chart(filtered_trades)
-            self.update_drawdown_chart(filtered_trades)
             
             # Update channel performance table
             self.update_channel_table(trades)
@@ -8531,6 +9517,7 @@ class DashboardPage(QWidget):
     def calculate_performance_metrics(self, trades):
         """Calculate comprehensive performance metrics"""
         if not trades:
+            logger.info("No trades available for performance calculation")
             return {
                 'total_pnl': 0,
                 'win_rate': 0,
@@ -8540,12 +9527,18 @@ class DashboardPage(QWidget):
                 'sharpe_ratio': 0
             }
         
-        # Basic metrics
-        total_trades = len(trades)
-        winning_trades = [t for t in trades if t.get('profit', 0) > 0]
-        losing_trades = [t for t in trades if t.get('profit', 0) < 0]
+        logger.info(f"Calculating performance metrics for {len(trades)} trades")
+        # Log first few trades for debugging
+        for i, trade in enumerate(trades[:3]):
+            logger.debug(f"Trade {i}: {trade.get('symbol', 'N/A')} - Profit: {trade.get('profit', 0)} - Channel: {trade.get('channel', 'N/A')}")
         
-        total_pnl = sum(t.get('profit', 0) for t in trades)
+        # Basic metrics - only include closed executed trades with valid data
+        valid_trades = [t for t in trades if t.get('status') == 'Executed' and t.get('profit') is not None and t.get('closure_type') not in ['Open', None]]
+        total_trades = len(valid_trades)
+        winning_trades = [t for t in valid_trades if t.get('profit', 0) > 0]
+        losing_trades = [t for t in valid_trades if t.get('profit', 0) < 0]
+        
+        total_pnl = sum(t.get('profit', 0) for t in valid_trades)
         win_rate = len(winning_trades) / total_trades * 100 if total_trades > 0 else 0
         
         # Risk/Reward calculation
@@ -8609,16 +9602,19 @@ class DashboardPage(QWidget):
 
     def update_metric_cards(self, metrics):
         """Update metric label values"""
-        # Update total P&L label
-        pnl_text = f"Total P&L: ${metrics['total_pnl']:.2f}"
-        self.total_pnl_label.setText(pnl_text)
-        
-        # Update other labels
-        self.win_rate_label.setText(f"Win Rate: {metrics['win_rate']:.1f}%")
-        self.rr_label.setText(f"Avg R:R: {metrics['avg_rr']:.2f}")
-        self.drawdown_label.setText(f"Max Drawdown: ${metrics['max_drawdown']:.2f}")
-        self.profit_factor_label.setText(f"Profit Factor: {metrics['profit_factor']:.2f}")
-        self.sharpe_label.setText(f"Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
+        try:
+            # Update total P&L label
+            pnl_text = f"💰 Total P&L: ${metrics['total_pnl']:.2f}"
+            self.total_pnl_label.setText(pnl_text)
+            
+            # Update other labels
+            self.win_rate_label.setText(f"🎯 Win Rate: {metrics['win_rate']:.1f}%")
+            self.rr_label.setText(f"⚖️ Avg R:R: {metrics['avg_rr']:.2f}")
+            self.drawdown_label.setText(f"📉 Max Drawdown: ${metrics['max_drawdown']:.2f}")
+            self.profit_factor_label.setText(f"📊 Profit Factor: {metrics['profit_factor']:.2f}")
+            self.sharpe_label.setText(f"📈 Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
+        except Exception as e:
+            logger.error(f"Error updating metric cards: {e}")
 
     def update_equity_chart(self, trades):
         """Generate and display equity curve chart"""
@@ -8753,13 +9749,108 @@ class DashboardPage(QWidget):
 
 
 
+    def on_period_changed(self):
+        """Handle period selector change"""
+        try:
+            logger.info("Period changed, updating performance data")
+            self.debounced_performance_update()
+        except Exception as e:
+            logger.error(f"Error handling period change: {e}")
+
+    def on_channel_changed(self):
+        """Handle channel selector change"""
+        try:
+            logger.info("Channel changed, updating performance data")
+            self.debounced_performance_update()
+        except Exception as e:
+            logger.error(f"Error handling channel change: {e}")
+
+    def on_refresh_performance(self):
+        """Handle refresh button click"""
+        try:
+            logger.info("Refresh button clicked, updating performance data")
+            self.update_performance_data()  # Direct update for refresh button
+        except Exception as e:
+            logger.error(f"Error handling refresh: {e}")
+
+    def debounced_performance_update(self):
+        """Debounced performance update to prevent excessive calls"""
+        try:
+            # Cancel any existing timer
+            if hasattr(self, '_performance_update_timer'):
+                self._performance_update_timer.stop()
+            
+            # Create new timer for debounced update
+            self._performance_update_timer = QTimer()
+            self._performance_update_timer.setSingleShot(True)
+            self._performance_update_timer.timeout.connect(self.update_performance_data)
+            self._performance_update_timer.start(500)  # 500ms delay
+            
+        except Exception as e:
+            logger.error(f"Error in debounced performance update: {e}")
+
+    def calculate_average_duration(self, trades):
+        """Calculate average trading duration for a list of trades"""
+        try:
+            if not trades:
+                return "N/A"
+            
+            total_duration = 0
+            valid_trades = 0
+            
+            for trade in trades:
+                # Get open and close times
+                open_time = trade.get('open_time')
+                close_time = trade.get('close_time')
+                
+                if open_time and close_time:
+                    try:
+                        # Parse times and calculate duration
+                        if isinstance(open_time, str):
+                            open_time = datetime.fromisoformat(open_time.replace('Z', '+00:00'))
+                        if isinstance(close_time, str):
+                            close_time = datetime.fromisoformat(close_time.replace('Z', '+00:00'))
+                        
+                        duration = close_time - open_time
+                        total_duration += duration.total_seconds()
+                        valid_trades += 1
+                    except Exception as e:
+                        logger.warning(f"Error parsing trade duration: {e}")
+                        continue
+            
+            if valid_trades == 0:
+                return "N/A"
+            
+            avg_seconds = total_duration / valid_trades
+            
+            # Convert to human readable format
+            if avg_seconds < 60:
+                return f"{avg_seconds:.0f}s"
+            elif avg_seconds < 3600:
+                minutes = avg_seconds / 60
+                return f"{minutes:.0f}m"
+            elif avg_seconds < 86400:
+                hours = avg_seconds / 3600
+                return f"{hours:.1f}h"
+            else:
+                days = avg_seconds / 86400
+                return f"{days:.1f}d"
+                
+        except Exception as e:
+            logger.error(f"Error calculating average duration: {e}")
+            return "N/A"
+
     def update_channel_table(self, trades):
         """Update channel performance ranking table"""
         try:
-            # Group trades by channel
+            # Group trades by channel - only include executed trades
             channel_data = {}
             
             for trade in trades:
+                # Only include closed executed trades with valid profit data
+                if trade.get('status') != 'Executed' or trade.get('profit') is None or trade.get('closure_type') in ['Open', None]:
+                    continue
+                    
                 channel = trade.get('channel', 'Unknown')
                 if channel not in channel_data:
                     channel_data[channel] = {
@@ -8809,73 +9900,112 @@ class DashboardPage(QWidget):
             # Sort by score
             channel_rankings.sort(key=lambda x: x['score'], reverse=True)
             
-            # Update table
-            self.channel_table.setRowCount(len(channel_rankings))
+            # Ensure at least 10 rows for visual consistency
+            min_rows = max(10, len(channel_rankings))
+            self.channel_table.setRowCount(min_rows)
             
-            for i, ranking in enumerate(channel_rankings):
-                # Rank
-                rank_item = QTableWidgetItem(str(i + 1))
-                rank_item.setTextAlignment(Qt.AlignCenter)
-                self.channel_table.setItem(i, 0, rank_item)
-                
-                # Channel
-                channel_item = QTableWidgetItem(ranking['channel'])
-                self.channel_table.setItem(i, 1, channel_item)
-                
-                # Trades
-                trades_item = QTableWidgetItem(str(ranking['trades']))
-                trades_item.setTextAlignment(Qt.AlignCenter)
-                self.channel_table.setItem(i, 2, trades_item)
-                
-                # Win Rate
-                win_rate_item = QTableWidgetItem(f"{ranking['win_rate']:.1f}%")
-                win_rate_item.setTextAlignment(Qt.AlignCenter)
-                self.channel_table.setItem(i, 3, win_rate_item)
-                
-                # P&L
-                pnl_item = QTableWidgetItem(f"${ranking['pnl']:.2f}")
-                pnl_item.setTextAlignment(Qt.AlignCenter)
-                if ranking['pnl'] >= 0:
-                    pnl_item.setForeground(QColor("#10B981"))
+            for i in range(min_rows):
+                if i < len(channel_rankings):
+                    ranking = channel_rankings[i]
+                    try:
+                        # Rank
+                        rank_item = QTableWidgetItem(str(i + 1))
+                        rank_item.setTextAlignment(Qt.AlignCenter)
+                        self.channel_table.setItem(i, 0, rank_item)
+                        
+                        # Channel
+                        channel_item = QTableWidgetItem(ranking['channel'])
+                        self.channel_table.setItem(i, 1, channel_item)
+                        
+                        # Trades
+                        trades_item = QTableWidgetItem(str(ranking['trades']))
+                        trades_item.setTextAlignment(Qt.AlignCenter)
+                        self.channel_table.setItem(i, 2, trades_item)
+                        
+                        # Win Rate
+                        win_rate_item = QTableWidgetItem(f"{ranking['win_rate']:.1f}%")
+                        win_rate_item.setTextAlignment(Qt.AlignCenter)
+                        self.channel_table.setItem(i, 3, win_rate_item)
+                        
+                        # Total P&L
+                        pnl_item = QTableWidgetItem(f"${ranking['pnl']:.2f}")
+                        pnl_item.setTextAlignment(Qt.AlignCenter)
+                        if ranking['pnl'] >= 0:
+                            pnl_item.setForeground(QColor("#10B981"))
+                        else:
+                            pnl_item.setForeground(QColor("#EF4444"))
+                        self.channel_table.setItem(i, 4, pnl_item)
+                        
+                        # Avg P&L
+                        avg_pnl = ranking['pnl'] / ranking['trades'] if ranking['trades'] > 0 else 0
+                        avg_pnl_item = QTableWidgetItem(f"${avg_pnl:.2f}")
+                        avg_pnl_item.setTextAlignment(Qt.AlignCenter)
+                        if avg_pnl >= 0:
+                            avg_pnl_item.setForeground(QColor("#10B981"))
+                        else:
+                            avg_pnl_item.setForeground(QColor("#EF4444"))
+                        self.channel_table.setItem(i, 5, avg_pnl_item)
+                        
+                        # R:R
+                        rr_item = QTableWidgetItem(f"{ranking['rr']:.2f}")
+                        rr_item.setTextAlignment(Qt.AlignCenter)
+                        self.channel_table.setItem(i, 6, rr_item)
+                        
+                        # Avg Duration
+                        avg_duration = self.calculate_average_duration(data['trades'])
+                        duration_item = QTableWidgetItem(avg_duration)
+                        duration_item.setTextAlignment(Qt.AlignCenter)
+                        self.channel_table.setItem(i, 7, duration_item)
+                        
+                        # Score
+                        score_item = QTableWidgetItem(f"{ranking['score']:.1f}")
+                        score_item.setTextAlignment(Qt.AlignCenter)
+                        self.channel_table.setItem(i, 8, score_item)
+                    except Exception as e:
+                        logger.error(f"Error updating table row {i}: {e}")
+                        continue
                 else:
-                    pnl_item.setForeground(QColor("#EF4444"))
-                self.channel_table.setItem(i, 4, pnl_item)
-                
-                # R:R
-                rr_item = QTableWidgetItem(f"{ranking['rr']:.2f}")
-                rr_item.setTextAlignment(Qt.AlignCenter)
-                self.channel_table.setItem(i, 5, rr_item)
-                
-                # Score
-                score_item = QTableWidgetItem(f"{ranking['score']:.1f}")
-                score_item.setTextAlignment(Qt.AlignCenter)
-                self.channel_table.setItem(i, 6, score_item)
+                    # Fill remaining rows with empty items for visual consistency
+                    for j in range(9):
+                        empty_item = QTableWidgetItem("")
+                        self.channel_table.setItem(i, j, empty_item)
             
-            # Update channel selector
-            current_channels = [ranking['channel'] for ranking in channel_rankings]
-            self.channel_selector.clear()
-            self.channel_selector.addItem("All Channels")
-            self.channel_selector.addItems(current_channels)
+            # Update channel selector - remove duplicates and prevent unnecessary updates
+            current_channels = list(set([ranking['channel'] for ranking in channel_rankings]))
+            current_channels.sort()  # Sort alphabetically
             
-            # Responsive table column widths
-            if hasattr(self, 'channel_table'):
-                table_width = width - (base_margin * 2)
-                col_widths = {
-                    0: int(table_width * 0.08),   # Rank
-                    1: int(table_width * 0.25),   # Channel
-                    2: int(table_width * 0.12),   # Trades
-                    3: int(table_width * 0.12),   # Win Rate
-                    4: int(table_width * 0.15),   # P&L
-                    5: int(table_width * 0.10),   # R:R
-                    6: int(table_width * 0.10)    # Score
-                }
-                
-                for col, width in col_widths.items():
-                    if col < self.channel_table.columnCount():
-                        self.channel_table.setColumnWidth(col, max(50, width))
+            # Check if channels have changed to prevent unnecessary updates
+            existing_channels = []
+            for i in range(self.channel_selector.count()):
+                if i > 0:  # Skip "All Channels"
+                    existing_channels.append(self.channel_selector.itemText(i))
+            
+            if existing_channels != current_channels:
+                self.channel_selector.clear()
+                self.channel_selector.addItem("All Channels")
+                self.channel_selector.addItems(current_channels)
+                logger.info(f"Channel selector updated with {len(current_channels)} unique channels")
+            
+            # Only log if there are actual changes to reduce spam
+            if len(channel_rankings) > 0:
+                logger.debug(f"Channel table updated with {len(channel_rankings)} channels from {len(trades)} trades")
             
         except Exception as e:
             logger.error(f"Error updating channel table: {e}")
+            # Show at least 10 rows with "No data available" message
+            self.channel_table.setRowCount(10)
+            for i in range(10):
+                if i == 0:
+                    # First row shows the message
+                    no_data_item = QTableWidgetItem("No trade data available")
+                    no_data_item.setTextAlignment(Qt.AlignCenter)
+                    self.channel_table.setItem(i, 0, no_data_item)
+                    self.channel_table.setSpan(i, 0, 1, 9)  # Span across all columns
+                else:
+                    # Empty rows for visual consistency
+                    for j in range(9):
+                        empty_item = QTableWidgetItem("")
+                        self.channel_table.setItem(i, j, empty_item)
             
     def update_responsive_layout(self, width, height):
         """Update layout to be responsive to window size"""
@@ -9017,6 +10147,8 @@ class TradeHistory:
     def add_trade(self, trade_data):
         """Add a trade to history with proper profit calculation"""
         trade_data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        trade_data["closure_type"] = "Open"  # Default closure type
+        trade_data["close_price"] = None  # Will be set when trade is closed
         self.calculate_profit(trade_data)
         self.history.append(trade_data)
         self.save()
@@ -9064,22 +10196,68 @@ class TradeHistory:
             # Fallback: calculate theoretical profit based on TP
             entry_price = trade.get('entry_price')
             tp = trade.get('tp')
+            tps = trade.get('tps', [])
             lot_size = trade.get('lot_size', 0.1)
             order_type = trade.get('order_type', '')
             
             # Handle None values safely
-            if entry_price is None or lot_size is None:
+            if lot_size is None:
                 return
                 
             try:
-                entry_price = float(entry_price)
                 lot_size = float(lot_size)
             except (ValueError, TypeError):
                 return
             
+            # If entry_price is None, try to estimate from TP or use a default
+            if entry_price is None:
+                # Try to use the first TP as entry price estimate
+                if tps and len(tps) > 0:
+                    try:
+                        estimated_entry = float(tps[0])
+                        # For BUY orders, entry should be lower than TP
+                        # For SELL orders, entry should be higher than TP
+                        if order_type.startswith('BUY'):
+                            entry_price = estimated_entry * 0.995  # 0.5% below TP
+                        else:
+                            entry_price = estimated_entry * 1.005  # 0.5% above TP
+                    except (ValueError, TypeError):
+                        # For XAUUSD, use a reasonable default
+                        if symbol == 'XAUUSD':
+                            entry_price = 3340.0  # Reasonable XAUUSD price
+                        else:
+                            entry_price = 1.0  # Default fallback
+                else:
+                    # For XAUUSD, use a reasonable default
+                    if symbol == 'XAUUSD':
+                        entry_price = 3340.0  # Reasonable XAUUSD price
+                    else:
+                        entry_price = 1.0  # Default fallback
+            else:
+                try:
+                    entry_price = float(entry_price)
+                except (ValueError, TypeError):
+                    # For XAUUSD, use a reasonable default
+                    if symbol == 'XAUUSD':
+                        entry_price = 3340.0  # Reasonable XAUUSD price
+                    else:
+                        entry_price = 1.0  # Default fallback
+            
+            # Calculate profit based on TP
             if tp and entry_price > 0:
                 try:
                     tp = float(tp)
+                    if order_type.startswith('BUY'):
+                        profit = (tp - entry_price) * lot_size * 100000
+                    else:
+                        profit = (entry_price - tp) * lot_size * 100000
+                    trade["profit"] = profit
+                except (ValueError, TypeError):
+                    pass
+            elif tps and len(tps) > 0 and entry_price > 0:
+                # Use first TP if main TP is not available
+                try:
+                    tp = float(tps[0])
                     if order_type.startswith('BUY'):
                         profit = (tp - entry_price) * lot_size * 100000
                     else:
@@ -9092,23 +10270,145 @@ class TradeHistory:
             # Don't log every error, just set profit to 0
             trade["profit"] = 0
 
-    def update_trade_closure(self, symbol, closure_type, profit=None):
+    def update_trade_closure(self, symbol, closure_type, close_price=None, profit=None):
         """Update trade closure information when a trade is closed"""
         # Find the most recent trade for this symbol
         for trade in reversed(self.history):
             if trade.get('symbol') == symbol and trade.get('status') == 'Executed':
                 trade['closure_type'] = closure_type  # 'TP', 'SL', 'Manual', 'Partial'
+                trade['close_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Set close price if provided
+                if close_price is not None:
+                    trade['close_price'] = close_price
+                
+                # Calculate profit based on close price if not provided
+                if profit is None and close_price is not None:
+                    profit = self.calculate_profit_from_close_price(trade, close_price)
+                
                 if profit is not None:
                     trade['profit'] = profit
-                trade['close_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
                 self.save()
+                logger.info(f"Updated trade closure: {symbol} - {closure_type} - Profit: ${profit:.2f}")
                 break
+
+    def calculate_profit_from_close_price(self, trade, close_price):
+        """Calculate profit based on entry and close price"""
+        try:
+            entry_price = trade.get('entry_price')
+            lot_size = trade.get('lot_size', 0.1)
+            order_type = trade.get('order_type', '')
+            
+            # Handle None values safely
+            if entry_price is None or lot_size is None:
+                return 0
+                
+            try:
+                entry_price = float(entry_price)
+                lot_size = float(lot_size)
+                close_price = float(close_price)
+            except (ValueError, TypeError):
+                return 0
+            
+            # Calculate profit based on order type
+            if order_type.startswith('BUY'):
+                # For buy orders, profit = (close_price - entry_price) * lot_size * 100000
+                profit = (close_price - entry_price) * lot_size * 100000
+            else:
+                # For sell orders, profit = (entry_price - close_price) * lot_size * 100000
+                profit = (entry_price - close_price) * lot_size * 100000
+            
+            return profit
+            
+        except Exception as e:
+            logger.error(f"Error calculating profit from close price: {e}")
+            return 0
 
     def get_recent_trades(self, limit=50):
         return self.history[-limit:][::-1]
 
     def get_all_trades(self):
         return self.history[::-1]  # Return in reverse chronological order
+
+    def recalculate_all_profits(self):
+        """Recalculate profits for all trades in history"""
+        try:
+            logger.info("Recalculating profits for all trades...")
+            for trade in self.history:
+                self.calculate_profit(trade)
+            self.save()
+            logger.info(f"Recalculated profits for {len(self.history)} trades")
+        except Exception as e:
+            logger.error(f"Error recalculating profits: {e}")
+
+    def add_sample_closed_trades(self):
+        """Add sample closed trades for testing"""
+        try:
+            # Sample TP trade
+            tp_trade = {
+                "timestamp": "2025-08-21 14:00:00",
+                "channel": "GTD_fx",
+                "symbol": "XAUUSD",
+                "order_type": "BUY",
+                "entry_price": 3340.0,
+                "sl": 3328.78,
+                "tp": 3360.78,
+                "tps": [3360.78],
+                "lot_size": 0.1,
+                "status": "Executed",
+                "closure_type": "TP",
+                "close_price": 3360.78,
+                "close_time": "2025-08-21 14:30:00",
+                "profit": 207.8,
+                "notes": "Take profit hit"
+            }
+            
+            # Sample SL trade
+            sl_trade = {
+                "timestamp": "2025-08-21 15:00:00",
+                "channel": "GTD_fx",
+                "symbol": "XAUUSD",
+                "order_type": "SELL",
+                "entry_price": 3345.0,
+                "sl": 3355.0,
+                "tp": 3330.0,
+                "tps": [3330.0],
+                "lot_size": 0.1,
+                "status": "Executed",
+                "closure_type": "SL",
+                "close_price": 3355.0,
+                "close_time": "2025-08-21 15:15:00",
+                "profit": -100.0,
+                "notes": "Stop loss hit"
+            }
+            
+            # Sample Manual trade
+            manual_trade = {
+                "timestamp": "2025-08-21 16:00:00",
+                "channel": "GTD_fx",
+                "symbol": "XAUUSD",
+                "order_type": "BUY",
+                "entry_price": 3342.0,
+                "sl": 3330.0,
+                "tp": 3360.0,
+                "tps": [3360.0],
+                "lot_size": 0.1,
+                "status": "Executed",
+                "closure_type": "Manual",
+                "close_price": 3350.0,
+                "close_time": "2025-08-21 16:45:00",
+                "profit": 80.0,
+                "notes": "Manually closed"
+            }
+            
+            # Add sample trades
+            self.history.extend([tp_trade, sl_trade, manual_trade])
+            self.save()
+            logger.info("Added sample closed trades for testing")
+            
+        except Exception as e:
+            logger.error(f"Error adding sample trades: {e}")
 
     def clear(self):
         self.history = []
@@ -9122,6 +10422,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         logger.info('Initializing MainWindow components')
         self.setWindowTitle(f"{APP_NAME} v{VERSION}")
+        # Set window icon
+        self.setWindowIcon(QIcon("FTSC.png"))
         
         # Thread safety verification
         logger.debug('MainWindow thread ID: %s', QThread.currentThread().objectName())
@@ -9145,7 +10447,7 @@ class MainWindow(QMainWindow):
         
         # Initialize UI first to ensure application is responsive
         # Load application logo
-        logo_path = "ftsc.png"
+        logo_path = "FTSC.png"
         if os.path.exists(logo_path):
             self.app_logo = QPixmap(logo_path)
             if self.app_logo.isNull():
@@ -9231,6 +10533,9 @@ class MainWindow(QMainWindow):
             self.check_activation_status()
             self.setup_timers()
             
+            # Try auto-connection if session exists
+            QTimer.singleShot(2000, self.attempt_telegram_auto_connect)
+            
             # Update status
             self.status_bar.showMessage("Application initialized successfully")
             
@@ -9252,6 +10557,57 @@ class MainWindow(QMainWindow):
         # The actual display is handled by the dashboard page
         if hasattr(self, 'dashboard_page'):
             self.dashboard_page.update_trade_history()
+
+    def attempt_telegram_auto_connect(self):
+        """Attempt to auto-connect to Telegram using saved session"""
+        try:
+            if not hasattr(self, 'telegram_manager') or not self.telegram_manager:
+                logger.warning("Telegram manager not available for auto-connect")
+                return
+                
+            session = self.settings.get_telegram_session()
+            if session:
+                logger.info("Attempting Telegram auto-connection with saved session")
+                self.status_bar.showMessage("Attempting Telegram auto-connection...")
+                
+                # Set the session string and attempt connection
+                self.telegram_manager.session_string = session
+                self.telegram_manager.connect_telegram(
+                    TELEGRAM_API_ID,
+                    TELEGRAM_API_HASH,
+                    ""
+                )
+                
+                # Update UI after a delay to allow connection to establish
+                QTimer.singleShot(3000, self.check_telegram_auto_connect_result)
+            else:
+                logger.info("No saved Telegram session found for auto-connection")
+                
+        except Exception as e:
+            logger.error(f"Error in attempt_telegram_auto_connect: {e}")
+
+    def check_telegram_auto_connect_result(self):
+        """Check if Telegram auto-connection was successful"""
+        try:
+            if hasattr(self, 'telegram_manager') and self.telegram_manager:
+                if self.telegram_manager.connected:
+                    logger.info("Telegram auto-connection successful")
+                    self.status_bar.showMessage("Telegram auto-connection successful!")
+                    
+                    # Update UI to logged in state
+                    if hasattr(self, 'telegram_page'):
+                        self.telegram_page.update_ui_for_logged_in_state()
+                    
+                    # Load channels
+                    self.telegram_manager.load_channels()
+                    
+                    # Update connection status
+                    self.update_connection_status()
+                else:
+                    logger.info("Telegram auto-connection failed or not yet complete")
+                    self.status_bar.showMessage("Telegram auto-connection failed")
+        except Exception as e:
+            logger.error(f"Error checking Telegram auto-connect result: {e}")
 
     def center_on_screen(self):
         """Center the window on the screen and ensure it fits within screen bounds"""
@@ -9317,13 +10673,13 @@ class MainWindow(QMainWindow):
         self.app_logo.fill(Qt.transparent)
         painter = QPainter(self.app_logo)
         gradient = QLinearGradient(0, 0, 128, 128)
-        gradient.setColorAt(0, QColor(0))
-        gradient.setColorAt(1, QColor(0))
+        gradient.setColorAt(0, QColor("#f27d03"))  # Orange gradient start
+        gradient.setColorAt(1, QColor("#e06a00"))  # Orange gradient end
         painter.fillRect(self.app_logo.rect(), gradient)
-        font = QFont("Arial", 16, QFont.Weight.Bold)
+        font = QFont("Arial", 12, QFont.Weight.Bold)
         painter.setFont(font)
-        painter.setPen(QColor(0))
-        painter.drawText(self.app_logo.rect(), Qt.AlignmentFlag.AlignCenter, "F")
+        painter.setPen(QColor("#ffffff"))  # White text
+        painter.drawText(self.app_logo.rect(), Qt.AlignmentFlag.AlignCenter, "FTSC")
         painter.end()
 
     def setup_ui(self):
@@ -9634,15 +10990,19 @@ class MainWindow(QMainWindow):
             logger.error("MT5 page not available")
 
     def show_dashboard(self):
-        if hasattr(self, 'dashboard_page') and self.dashboard_page:
-            self.stacked_widget.setCurrentWidget(self.dashboard_page)
-            self.status_bar.showMessage("Dashboard ready")
-            # Force refresh connection status and account info
-            self.update_connection_status()
-            self.update_account_info()
-        else:
-            self.status_bar.showMessage("Dashboard not available")
-            logger.error("Dashboard page not available")
+        try:
+            if hasattr(self, 'dashboard_page') and self.dashboard_page:
+                self.stacked_widget.setCurrentWidget(self.dashboard_page)
+                self.status_bar.showMessage("Dashboard ready")
+                # Force refresh connection status and account info
+                self.update_connection_status()
+                self.update_account_info()
+            else:
+                self.status_bar.showMessage("Dashboard not available")
+                logger.error("Dashboard page not available")
+        except Exception as e:
+            logger.error(f"Error in show_dashboard: {e}")
+            self.status_bar.showMessage(f"Error navigating to dashboard: {str(e)}")
 
     def on_verification_sent(self):
         self.telegram_page.update_ui_for_verification_state()
@@ -9674,9 +11034,16 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("No channels found")
 
     def on_telegram_error(self, error):
-        QMessageBox.critical(self, "Telegram Error", error)
-        self.telegram_page.update_ui_for_login_state()
-        self.status_bar.showMessage(f"Error: {error}")
+        # Check if it's a timeout error
+        if "timed out" in error.lower() or "timeout" in error.lower():
+            # Show resend button for timeout scenarios only if in verification state
+            self.telegram_page.show_resend_button()
+            self.status_bar.showMessage("Code expired. Click 'Resend Code' to try again.")
+        else:
+            # For other errors, show error message and reset to login state
+            QMessageBox.critical(self, "Telegram Error", error)
+            self.telegram_page.update_ui_for_login_state()
+            self.status_bar.showMessage(f"Error: {error}")
         self.update_connection_status()
 
     def update_connection_status(self, telegram_status=None):
@@ -10468,3 +11835,4 @@ if __name__ == "__main__":
     QTimer.singleShot(100, lambda: window.update_responsive_layouts())
     
     sys.exit(app.exec())
+

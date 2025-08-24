@@ -1,15 +1,12 @@
 {
   "activated": true,
   "telegram": {
-    "session_string": "1BVtsOLsBuwNxavhx_WkSrpMC0PqQ0lnACYG2Kteh184F0eCi8Y3FtFLaBl8SFEp33LXmH-z8GtNUDOVnWEegh_Ci6f04Mo8EFBHASXmUUvjtde34OziIeKNjxiLy1S6Pm4pfrsOW5fSSGcMoOrsL9Ol_FVd8b3gin_w-zDskTBfNpXXbtOZefokCS4s3x7-_lLz41IgaL7u2Pf1h19VUelOnqiQL0MLz5-gxxR3-AraLxdOqA3Q9Wyp5fBvfEOtxYBvryXYGUNAdJJ89lI0iijGz3oBXqF4VsgNL51m9sJE6dVk0BNhERw2DkeWB8IFbmkruEAC7KBOw_vpZuQ3cZqGgTUjBcfo=",
+    "session_string": null,
     "channel_ids": [
-      1661400724,
-      1667884332,
-      1212066496,
-      1775121037,
+      1207770521,
       2295142103,
-      1588519179,
-      1593088122
+      1470488639,
+      1609710023
     ]
   },
   "risk": {
